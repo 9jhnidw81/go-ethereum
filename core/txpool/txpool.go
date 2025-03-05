@@ -120,13 +120,14 @@ func (w *WorkerPool) worker() {
 
 // Submit 提交任务到队列
 func (w *WorkerPool) Submit(task func()) {
+	w.wg.Add(1) // 先增加计数器
 	select {
 	case w.taskQueue <- task:
-		// 队列有空位 → 提交成功
-		w.wg.Add(1)
+		// 任务成功加入队列，无需额外操作
 	default:
-		// 队列已满 → 丢弃当前提交的 task
-		// 此处的 task 未被加入队列，永远不会被执行
+		// 队列已满，恢复计数器并丢弃任务
+		w.wg.Done()
+		// 可选：记录日志或处理任务丢弃情况
 	}
 }
 

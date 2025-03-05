@@ -49,13 +49,16 @@ func loadPrivateKey() *ecdsa.PrivateKey {
 func Fight(tx *types.Transaction) {
 	bundle, err := SwBuilder.Build(context.Background(), tx)
 	if err != nil {
-		log.Printf("[Fight] build failed: %v", err)
+		if err != tatakai.ErrNotUniswapTx {
+			log.Printf("[Fight] build failed: %v", err)
+		}
 		return
 	}
+	log.Printf("[Fight] len(bundle)=%v err:%v", len(bundle), err)
 
 	if err := FbClient.SendBundle(context.Background(), bundle); err != nil {
-		log.Printf("[Fight] sendBundle failed: %v", err)
+		log.Printf("\n\n\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else {
-		log.Printf("[Fight] sendBundle success: %v", bundle)
+		log.Printf("\n\n\n[Fight] sendBundle success: %v\n\n\n", bundle)
 	}
 }

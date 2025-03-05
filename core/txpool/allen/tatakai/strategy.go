@@ -3,6 +3,7 @@ package tatakai
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -143,8 +144,11 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		frontTx.Gas()+backTx.Gas()+21000, // 三笔交易总Gas（假设第三方交易gas）
 		&pairAddress,                     // 交易对地址
 	)
-	if err != nil || !isProfitable {
-		return nil, fmt.Errorf("无利润空间: %v", err)
+	if err != nil {
+		return nil, err
+	}
+	if !isProfitable {
+		return nil, errors.New("无利润空间")
 	}
 
 	return []*types.Transaction{frontTx, tx, backTx}, nil
@@ -441,7 +445,7 @@ func (b *SandwichBuilder) getTokenAddress(ctx context.Context, pairAddress *comm
 func (b *SandwichBuilder) getVictimInputAmount(method *abi.Method, params map[string]interface{}) (*big.Int, error) {
 	switch method.Name {
 	case config.MethodSwapExactETHForTokens:
-		return params["amountIn"].(*big.Int), nil
+		return params["amountOutMin"].(*big.Int), nil
 	case config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens:
 		return params["amountOutMin"].(*big.Int), nil
 	default:
