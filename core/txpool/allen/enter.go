@@ -55,10 +55,17 @@ func Fight(tx *types.Transaction) {
 		return
 	}
 	log.Printf("[Fight] len(bundle)=%v err:%v", len(bundle), err)
-
-	if err := FbClient.SendBundle(context.Background(), bundle); err != nil {
-		log.Printf("\n\n\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
+	// 模拟交易
+	// 提高gas
+	// 三个nonce
+	if err := FbClient.CallBundle(context.Background(), bundle); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else {
-		log.Printf("\n\n\n[Fight] sendBundle success: %v\n\n\n", bundle)
+		log.Printf("\r\n\r\n\r\n[Fight] CallBundle success: %v\n\n\n", bundle)
+	}
+	if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
+	} else {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v\n\n\n", bundle)
 	}
 }

@@ -65,7 +65,7 @@ func Get(network Network) *Config {
 			ChainID:           big.NewInt(11155111),
 			GasConfig: GasConfig{
 				MaxGasGwei:     150,
-				BaseMultiplier: 1.2,
+				BaseMultiplier: 5, // gas价格倍数
 				Slippage:       0.05,
 			},
 		}

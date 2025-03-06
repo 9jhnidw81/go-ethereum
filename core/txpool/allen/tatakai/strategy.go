@@ -3,7 +3,6 @@ package tatakai
 import (
 	"context"
 	"crypto/ecdsa"
-	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -23,15 +22,19 @@ const (
 	// 卖出滑点
 	slipPointSell = 2
 	// gas滑点
-	slipPointGas = 300
+	slipPointGas = 700
+	// 授权gas滑点
+	approveSlipPointGas = 200
 	// gas价格滑点
-	slipPointGasPrice = 200
+	slipPointGasPrice = 700
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 默认gas(用于首次卖出代币，无法计算gas值的备选)
 	defaultGas uint64 = 150000
 	// Uniswap V2 Pair初始化代码哈希
 	initCodeHash = "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+	// 最大授权额度
+	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 )
 
 type SandwichBuilder struct {
@@ -71,8 +74,11 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	// 是否Uniswap买入交易
 	ok, err := b.parser.IsBuyTransaction(params)
-	if !ok || err != nil {
+	if err != nil {
 		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotUniswapBuyTx
 	}
 
 	// 同步链上nonce
@@ -99,6 +105,23 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	// 滑点价格
 	gasPrice = CalculateWithSlippageEx(gasPrice, slipPointGasPrice)
 
+	// 直接授权（真实情况需要后授权，这里主要为了检验成功率
+	// 判断授权额度
+	path := params["path"].([]common.Address)
+	allowance, err := b.getAllowance(ctx, path[1], b.parser.routerAddress)
+	if err != nil {
+		return nil, err
+	}
+	// 授权
+	if allowance.Cmp(big.NewInt(0)) == 0 {
+		amountIn := new(big.Int)
+		amountIn.SetString(maxApproveAmount, 16)
+		err = b.approveTokens(ctx, path[1], amountIn, gasPrice, frontNonce)
+		fmt.Println("授权", path[1], "err:", err)
+		frontNonce++
+		backNonce++
+	}
+
 	frontTx, err := b.buildFrontRunTx(ctx, tx, gasPrice, method, params, frontNonce)
 	if err != nil {
 		return nil, err
@@ -122,8 +145,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	//	return nil, err
 	//}
 	//fmt.Println("发送卖出交易成功")
-
-	path := params["path"].([]common.Address)
 	pairAddress, err := b.GetPairAddress(path[0], path[1])
 	if err != nil {
 		return nil, err
@@ -148,7 +169,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		return nil, errors.New("无利润空间")
+		return nil, ErrNotEnoughProfit
 	}
 
 	return []*types.Transaction{frontTx, tx, backTx}, nil
@@ -440,6 +461,78 @@ func (b *SandwichBuilder) getTokenAddress(ctx context.Context, pairAddress *comm
 		return common.Address{}, err
 	}
 	return addr, nil
+}
+
+// 新增方法：查询代币授权额度
+func (b *SandwichBuilder) getAllowance(ctx context.Context, tokenAddr, spender common.Address) (*big.Int, error) {
+	// 构造调用数据
+	data, err := b.parser.erc20ABI.Pack("allowance", b.fromAddress, spender)
+	if err != nil {
+		return nil, fmt.Errorf("打包调用数据失败: %w", err)
+	}
+
+	// 调用合约
+	result, err := b.ethClient.CallContract(ctx, ethereum.CallMsg{
+		To:   &tokenAddr,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("合约调用失败: %w", err)
+	}
+
+	// 解析结果
+	var allowance *big.Int
+	if err := b.parser.erc20ABI.UnpackIntoInterface(&allowance, "allowance", result); err != nil {
+		return nil, fmt.Errorf("解析结果失败: %w", err)
+	}
+
+	return allowance, nil
+}
+
+// 授权
+func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) error {
+	// 打包调用数据
+	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, amountIn)
+	if err != nil {
+		return err
+	}
+
+	approveCallMsg := ethereum.CallMsg{
+		From: b.fromAddress,
+		To:   &tokenAddr,
+		Data: approveData,
+	}
+
+	// 估算Gas Limit
+	gasLimit := defaultGas
+	estimatedGas, err := b.ethClient.EstimateGas(ctx, approveCallMsg)
+	// 处理gas估算错误
+	if err == nil {
+		gasLimit = estimatedGas
+	}
+
+	// 创建交易
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		To:       &tokenAddr,
+		Gas:      CalculateUint64SlipPoint(gasLimit, approveSlipPointGas),
+		GasPrice: gasPrice,
+		Data:     approveData,
+	})
+
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(b.ethClient.Config.ChainID), b.privateKey)
+	if err != nil {
+		return err
+	}
+
+	// 发送交易
+	err = b.ethClient.SendTransaction(context.Background(), signedTx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Tokens approved for spending.")
+	return nil
 }
 
 func (b *SandwichBuilder) getVictimInputAmount(method *abi.Method, params map[string]interface{}) (*big.Int, error) {
