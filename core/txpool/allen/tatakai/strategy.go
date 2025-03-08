@@ -169,7 +169,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		return nil, ErrNotEnoughProfit
+		//return nil, ErrNotEnoughProfit
 	}
 
 	return []*types.Transaction{frontTx, tx, backTx}, nil

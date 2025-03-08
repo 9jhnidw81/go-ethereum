@@ -49,7 +49,7 @@ func loadPrivateKey() *ecdsa.PrivateKey {
 func Fight(tx *types.Transaction) {
 	bundle, err := SwBuilder.Build(context.Background(), tx)
 	if err != nil {
-		if err != tatakai.ErrNotUniswapTx {
+		if err != tatakai.ErrNotUniswapTx && err != tatakai.ErrNotBuyMethod && err != tatakai.ErrNotUniswapBuyTx {
 			log.Printf("[Fight] build failed: %v", err)
 		}
 		return
