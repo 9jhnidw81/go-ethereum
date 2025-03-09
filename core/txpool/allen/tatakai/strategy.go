@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/crypto"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -42,6 +43,9 @@ type SandwichBuilder struct {
 	parser      *TransactionParser
 	privateKey  *ecdsa.PrivateKey
 	fromAddress common.Address
+
+	// 代币授权的状态，避免重复授权
+	approveTokenMap sync.Map
 }
 
 type SwapParams struct {
@@ -93,9 +97,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	backNonce := frontNonce + 1
 
-	//接下来的问题，批量买入卖出交易，需要成功率很高
-	//	其次才是测试网的测试
-
 	// 实现完整的交易构建逻辑
 	gasPrice, err := b.ethClient.GetDynamicGasPrice(ctx)
 	if err != nil {
@@ -112,14 +113,19 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if err != nil {
 		return nil, err
 	}
-	// 授权
-	if allowance.Cmp(big.NewInt(0)) == 0 {
+	// 授权 TODO： 多个tx同一个token，导致多次授权->前者的txs的nonce失效
+	if allowance.Cmp(big.NewInt(0)) == 0 && !b.isTokenApproved(path[1]) {
 		amountIn := new(big.Int)
 		amountIn.SetString(maxApproveAmount, 16)
 		err = b.approveTokens(ctx, path[1], amountIn, gasPrice, frontNonce)
 		fmt.Println("授权", path[1], "err:", err)
-		frontNonce++
-		backNonce++
+		if err != nil {
+			return nil, err
+		} else {
+			b.setTokenApprove(path[1])
+			frontNonce++ // TODO: 这里会有问题，假设授权没报错，但是三明治攻击失败，nonce已经递增了，此时会导致后面的nonce全部失败？
+			backNonce++  // TODO: 可能需要定期检查nonce有效性？或者监控三明治攻击失败的时候，用自转0eth的方式重新清洗nonce？
+		}
 	}
 
 	frontTx, err := b.buildFrontRunTx(ctx, tx, gasPrice, method, params, frontNonce)
@@ -194,10 +200,10 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
 
 	data, err := b.parser.uniswapABI.Pack("swapExactETHForTokensSupportingFeeOnTransferTokens",
-		swapParams.AmountOutMin, // 使用原始交易的输出限制
-		swapParams.Path,
-		b.fromAddress,
-		deadline,
+		swapParams.AmountOutMin, // 最小期望获得的代币数量（滑点保护），当前使用原始交易的输出限制 TODO: 不一定要原始交易的输出，可以是自己的交易输出
+		swapParams.Path,         // 交易路径（必须包含WETH地址）
+		b.fromAddress,           // 代币接收地址
+		deadline,                // 交易过期时间戳
 	)
 	if err != nil {
 		return nil, fmt.Errorf("[%s] 交易数据构造失败: %w", methodPrefix, err)
@@ -246,11 +252,33 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		return nil, fmt.Errorf("[%s] 前导交易参数解析失败: %w", methodPrefix, err)
 	}
 
-	// 计算滑点后的输出（2%滑点）
-	backRunAmountOut := CalculateWithSlippageEx(frontParams.AmountOutMin, slipPointSell)
+	// 获取当前资金池储备
+	path := params["path"].([]common.Address)
+	pairAddress, err := b.GetPairAddress(path[0], path[1])
+	reserveWETH, reserveToken, err := b.getPoolReserves(ctx, &pairAddress)
+	if err != nil {
+		return nil, fmt.Errorf("[%s] 获取资金池储备失败: %w", methodPrefix, err)
+	}
 
-	// 临时设置为0，不检测滑点
-	backRunAmountOut = big.NewInt(0)
+	// 计算买入交易实际获得的代币数量（考虑0.3%手续费）
+	effectiveInput := new(big.Int).Mul(frontTx.Value(), big.NewInt(997))
+	effectiveInput.Div(effectiveInput, big.NewInt(1000))
+	tokenAmountOut := calculateOutputAmount(effectiveInput, reserveWETH, reserveToken)
+
+	// 计算理论ETH输出（考虑二次交易影响）
+	newReserveToken := new(big.Int).Add(reserveToken, tokenAmountOut)
+	newReserveWETH := new(big.Int).Sub(reserveWETH, effectiveInput)
+	expectedETH := calculateOutputAmount(
+		new(big.Int).Mul(tokenAmountOut, big.NewInt(997)), // 卖出时的手续费
+		newReserveToken,
+		newReserveWETH,
+	)
+
+	// 动态滑点计算（建议至少2%）
+	amountOutMin := CalculateWithSlippageEx(expectedETH, slipPointSell)
+	if amountOutMin.Cmp(common.Big0) <= 0 {
+		return nil, fmt.Errorf("[%s] 无效滑点计算 预期ETH:%s", methodPrefix, expectedETH.String())
+	}
 
 	// 反转交易路径
 	reversePath := ReversePath(frontParams.Path)
@@ -258,17 +286,13 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 	// 构造交易数据
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
 
-	fmt.Println(frontParams.AmountOutMin,
-		backRunAmountOut,
-		reversePath,
-		b.fromAddress,
-		deadline)
+	fmt.Println(tokenAmountOut, amountOutMin, reversePath, b.fromAddress, deadline)
 	data, err := b.parser.uniswapABI.Pack("swapExactTokensForETH",
-		frontParams.AmountOutMin,
-		backRunAmountOut,
-		reversePath,
-		b.fromAddress,
-		deadline,
+		tokenAmountOut, // 卖出的代币的精确数量
+		amountOutMin,   // 动态计算卖出代币时的最小可接受ETH数量
+		reversePath,    // 交易路径[代币地址, WETH地址]
+		b.fromAddress,  // ETH接收地址
+		deadline,       // 交易过期时间戳
 	)
 	if err != nil {
 		return nil, fmt.Errorf("交易数据构造失败: %w", err)
@@ -544,6 +568,17 @@ func (b *SandwichBuilder) getVictimInputAmount(method *abi.Method, params map[st
 	default:
 		return nil, fmt.Errorf("unsupported method: %s", method.Name)
 	}
+}
+
+// 辅助方法：判断代币是否授权
+func (b *SandwichBuilder) isTokenApproved(token common.Address) bool {
+	_, ok := b.approveTokenMap.Load(token)
+	return ok
+}
+
+// 辅助方法：代币授权标记
+func (b *SandwichBuilder) setTokenApprove(token common.Address) {
+	b.approveTokenMap.Store(token, true)
 }
 
 // 辅助方法：Uniswap输出量计算
