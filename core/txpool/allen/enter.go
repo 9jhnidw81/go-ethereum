@@ -20,14 +20,14 @@ var (
 // Attack 进击吧，艾伦
 func Attack(ethClient *ethclient.Client) {
 	// 初始化客户端
-	cfg := config.Get(config.Sepolia)
+	cfg := config.Get(config.SepoliaYu)
 	myEthClient, err := client.NewEthClient(cfg, ethClient)
 	if err != nil {
 		log.Fatalf("[Attack] client.NewEthClient failed:%+v", err)
 	}
 
 	// uniswap解析器
-	parser, _ := tatakai.NewParser(cfg.RouterAddress, cfg.WETHAddress, cfg.FactoryAddress, cfg.RouterAbi, cfg.Erc20Abi, cfg.PairAbi)
+	parser, _ := tatakai.NewParser(cfg.RouterAddress, cfg.WETHAddress, cfg.FactoryAddress, cfg.RouterAbi, cfg.Erc20Abi, cfg.PairAbi, cfg.FactoryAbi)
 
 	// 三明治构建器
 	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey())

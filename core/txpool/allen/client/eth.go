@@ -15,6 +15,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+const (
+	// 最大等待区块，超过则重置nonce且可能需要加速？
+	maxWaitingBlock = 5
+)
+
 type EthClient struct {
 	*ethclient.Client
 	Config *config.Config
@@ -77,6 +82,23 @@ func (c *EthClient) GetSequentialNonce(ctx context.Context, address common.Addre
 
 // ForceSyncNonce 强制同步到链上最新状态
 func (c *EthClient) ForceSyncNonce(ctx context.Context, address common.Address) error {
+	c.nonceLock.Lock()
+	defer c.nonceLock.Unlock()
+
+	current, err := c.PendingNonceAt(ctx, address)
+	if err != nil {
+		return fmt.Errorf("强制同步失败: %v", err)
+	}
+
+	old := atomic.LoadUint64(&c.localNonce)
+	atomic.StoreUint64(&c.localNonce, current)
+
+	log.Printf("[Nonce] 强制同步完成：%d -> %d", old, current)
+	return nil
+}
+
+// MonitorSendingTx 已发送交易监听
+func (c *EthClient) MonitorSendingTx(ctx context.Context, address common.Address) error {
 	c.nonceLock.Lock()
 	defer c.nonceLock.Unlock()
 

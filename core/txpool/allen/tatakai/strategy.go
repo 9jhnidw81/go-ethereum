@@ -3,6 +3,7 @@ package tatakai
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -33,8 +34,6 @@ const (
 	expireTime = time.Minute * 5
 	// 默认gas(用于首次卖出代币，无法计算gas值的备选)
 	defaultGas uint64 = 150000
-	// Uniswap V2 Pair初始化代码哈希
-	initCodeHash = "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
 	// 最大授权额度
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
@@ -165,7 +164,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 
 	// 从原始交易参数中获取受害者实际输入量
-	victimInput, err := b.getVictimInputAmount(method, params)
+	victimInput, err := b.getVictimInputAmount(method, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +175,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		frontTx.Value(),                  // 第一笔交易输入量
 		victimInput,                      // 正确获取受害者输入量
 		frontTx.GasPrice(),               // Gas价格
-		frontTx.Gas()+backTx.Gas()+21000, // 三笔交易总Gas（假设第三方交易gas）
+		frontTx.Gas()+backTx.Gas()+21000, // 三笔交易总Gas（假设第三方交易gas）TODO： 未考虑授权的Gas
 		&pairAddress,                     // 交易对地址
 	)
 	if err != nil {
@@ -296,7 +295,7 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx, targetTx 
 	case config.MethodSwapExactETHForTokens, config.MethodSwapETHForExactTokens, config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens, config.MethodSwapExactTokensForTokens:
 		victimInput = targetTx.Value() // 原始交易参数中的输入量
 	default:
-		return nil, fmt.Errorf("unsupported method: %s", method.Name)
+		return nil, fmt.Errorf("[%s] 模拟受害者交易影响 unsupported method: %s", methodPrefix, method.Name)
 	}
 
 	victimEffective := new(big.Int).Mul(victimInput, big.NewInt(997))
@@ -321,7 +320,8 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx, targetTx 
 	// 构造交易数据
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
 	reversePath := ReversePath(path)
-	data, err := b.parser.uniswapABI.Pack("swapExactTokensForETH",
+	data, err := b.parser.uniswapABI.Pack("swapExactTokensForETHSupportingFeeOnTransferTokens",
+		//data, err := b.parser.uniswapABI.Pack("swapExactTokensForETH", // 改用一种成功率较高的方式
 		frontTokenOut, // 卖出的代币的精确数量，使用前导获得的全部代币
 		amountOutMin,  // 动态计算卖出代币时的最小可接受ETH数量
 		reversePath,   // 交易路径[代币地址, WETH地址]
@@ -390,7 +390,7 @@ func (b *SandwichBuilder) parseSwapParams(method *abi.Method, params map[string]
 		swapParams.AmountOut = params["amountOut"].(*big.Int)
 
 	default:
-		return nil, fmt.Errorf("unsupported method: %s", method.Name)
+		return nil, fmt.Errorf("解析参数 unsupported method: %s", method.Name)
 	}
 
 	return swapParams, nil
@@ -402,18 +402,34 @@ func (b *SandwichBuilder) GetPairAddress(tokenA, tokenB common.Address) (common.
 	// 1. 正确排序代币地址
 	token0, token1 := SortTokens(tokenA, tokenB)
 
-	// 2. 计算salt（keccak256(abi.encodePacked(token0, token1))）
-	salt := crypto.Keccak256Hash(append(token0.Bytes(), token1.Bytes()...))
+	// 2. 准备调用数据 (getPair(address,address))
+	data, err := b.parser.factoryABI.Pack("getPair", token0, token1)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("ABI打包失败: %w", err)
+	}
 
-	// 3. 处理initCodeHash（去掉0x前缀后转为bytes）
-	initHash := common.FromHex(initCodeHash)
+	// 3. 调用工厂合约
+	result, err := b.ethClient.CallContract(context.Background(), ethereum.CallMsg{
+		To:   &b.parser.factoryAddress,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("工厂合约调用失败: %w", err)
+	}
 
-	// 4. 正确的Create2地址计算
-	pairAddress := crypto.CreateAddress2(
-		b.parser.factoryAddress,
-		salt,
-		initHash,
-	)
+	// 4. 解析返回地址
+	if len(result) != 32 {
+		return common.Address{}, fmt.Errorf("无效的返回数据长度: %d", len(result))
+	}
+
+	// 5. 转换为地址类型（最后20字节）
+	addressBytes := result[12:32] // 截取后20字节
+	pairAddress := common.BytesToAddress(addressBytes)
+
+	// 6. 验证地址有效性
+	if pairAddress == (common.Address{}) {
+		return common.Address{}, errors.New("交易对不存在")
+	}
 
 	return pairAddress, nil
 }
@@ -594,12 +610,13 @@ func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Ad
 	return nil
 }
 
-func (b *SandwichBuilder) getVictimInputAmount(method *abi.Method, params map[string]interface{}) (*big.Int, error) {
+// 获取受害者原始交易的实际输入量
+func (b *SandwichBuilder) getVictimInputAmount(method *abi.Method, tx *types.Transaction) (*big.Int, error) {
 	switch method.Name {
-	case config.MethodSwapExactETHForTokens, config.MethodSwapETHForExactTokens, config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens:
-		return params["amountOutMin"].(*big.Int), nil
+	case config.MethodSwapExactETHForTokens, config.MethodSwapETHForExactTokens, config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens, config.MethodSwapExactTokensForTokens:
+		return tx.Value(), nil
 	default:
-		return nil, fmt.Errorf("unsupported method: %s", method.Name)
+		return nil, fmt.Errorf("获取受害者原始交易输入量 unsupported method: %s", method.Name)
 	}
 }
 

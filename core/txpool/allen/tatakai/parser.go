@@ -27,9 +27,10 @@ type TransactionParser struct {
 	uniswapABI     abi.ABI
 	erc20ABI       abi.ABI
 	pairABI        abi.ABI
+	factoryABI     abi.ABI
 }
 
-func NewParser(routerAddr, wethAddr, factoryAddr, uniswapAbi, erc20Abi, pairAbi string) (*TransactionParser, error) {
+func NewParser(routerAddr, wethAddr, factoryAddr, uniswapAbi, erc20Abi, pairAbi, factoryAbi string) (*TransactionParser, error) {
 	uniswapABI, err := abi.JSON(strings.NewReader(uniswapAbi))
 	if err != nil {
 		return nil, fmt.Errorf("解析UniswapABI失败: %v", err)
@@ -42,6 +43,10 @@ func NewParser(routerAddr, wethAddr, factoryAddr, uniswapAbi, erc20Abi, pairAbi 
 	if err != nil {
 		return nil, fmt.Errorf("解析PairABI失败: %v", err)
 	}
+	factoryABI, err := abi.JSON(strings.NewReader(factoryAbi))
+	if err != nil {
+		return nil, fmt.Errorf("解析FactoryABI失败: %v", err)
+	}
 
 	return &TransactionParser{
 		routerAddress:  common.HexToAddress(routerAddr),
@@ -50,6 +55,7 @@ func NewParser(routerAddr, wethAddr, factoryAddr, uniswapAbi, erc20Abi, pairAbi 
 		uniswapABI:     uniswapABI,
 		erc20ABI:       erc20ABI,
 		pairABI:        pairABI,
+		factoryABI:     factoryABI,
 	}, nil
 }
 
