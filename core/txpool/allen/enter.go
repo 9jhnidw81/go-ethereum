@@ -38,7 +38,7 @@ func Attack(ethClient *ethclient.Client) {
 
 // 测试号无所谓，只是为了跑流程
 func loadPrivateKey() *ecdsa.PrivateKey {
-	pk, err := crypto.HexToECDSA("93dae4661d3b006f5d842273d6e0fb62fe65db4d9407c8499081c7984b9b8112")
+	pk, err := crypto.HexToECDSA("7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,6 +58,11 @@ func Fight(tx *types.Transaction) {
 	// 提高gas
 	// 三个nonce
 	if err := FbClient.CallBundle(context.Background(), bundle); err != nil {
+		// TODO： nonce too high(因为之前有三明治交易没有成功交易，导致本地的nonce一直在增加，使用更高的nonce导致交易被拒)
+		// TODO: 还需要知道当前累计发送的nonce记录
+		// 新增错误回滚
+		_ = FbClient.EthClient.ForceSyncNonce(context.Background(), SwBuilder.FromAddress)
+		log.Printf("\r\n\r\n\r\n[Fight] 模拟失败，已回滚nonce状态")
 		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)

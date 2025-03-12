@@ -28,7 +28,7 @@ const (
 
 type FlashbotClient struct {
 	rpc        *flashbotsrpc.FlashbotsRPC
-	ethClient  *EthClient
+	EthClient  *EthClient
 	config     *config.Config
 	privateKey *ecdsa.PrivateKey
 }
@@ -84,7 +84,7 @@ type Privacy struct {
 func NewFlashbotClient(cfg *config.Config, ethClient *EthClient, pk *ecdsa.PrivateKey) *FlashbotClient {
 	return &FlashbotClient{
 		rpc:        flashbotsrpc.New(cfg.FlashbotsEndpoint),
-		ethClient:  ethClient,
+		EthClient:  ethClient,
 		config:     cfg,
 		privateKey: pk,
 	}
@@ -132,7 +132,7 @@ func (c *FlashbotClient) SendBundle(ctx context.Context, txs []*types.Transactio
 	}
 
 	// 使用以太坊客户端获取区块号
-	blockNumber, err := c.ethClient.BlockNumber(ctx)
+	blockNumber, err := c.EthClient.BlockNumber(ctx)
 	if err != nil {
 		return err
 	}
@@ -159,12 +159,12 @@ func (c *FlashbotClient) CallBundle(ctx context.Context, txs []*types.Transactio
 	}
 
 	// 使用以太坊客户端获取区块号
-	blockNumber, err := c.ethClient.BlockNumber(ctx)
+	blockNumber, err := c.EthClient.BlockNumber(ctx)
 	if err != nil {
 		return err
 	}
 
-	gasPrice, err := c.ethClient.SuggestGasPrice(ctx)
+	gasPrice, err := c.EthClient.SuggestGasPrice(ctx)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.T
 	}
 
 	// 设置区块包含范围（下两个区块）
-	currentBlock, _ := c.ethClient.BlockNumber(ctx)
+	currentBlock, _ := c.EthClient.BlockNumber(ctx)
 	targetBlock := fmt.Sprintf("0x%x", currentBlock+1)
 	maxBlock := fmt.Sprintf("0x%x", currentBlock+3)
 

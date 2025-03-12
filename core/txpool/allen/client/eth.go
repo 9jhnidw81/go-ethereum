@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/core/types"
+	"log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -52,19 +53,43 @@ func (c *EthClient) GetSequentialNonce(ctx context.Context, address common.Addre
 	c.nonceLock.Lock()
 	defer c.nonceLock.Unlock()
 
-	// 第一次获取时初始化
-	if atomic.LoadUint64(&c.localNonce) == 0 {
-		pendingNonce, err := c.PendingNonceAt(ctx, address)
-		if err != nil {
-			return 0, err
-		}
-		atomic.StoreUint64(&c.localNonce, pendingNonce)
+	// 实时查询链上最新nonce
+	currentChainNonce, err := c.PendingNonceAt(ctx, address)
+	if err != nil {
+		return 0, err
 	}
 
-	// 获取并递增
-	current := atomic.LoadUint64(&c.localNonce)
-	atomic.AddUint64(&c.localNonce, 1)
-	return current, nil
+	// 自动修正本地nonce
+	local := atomic.LoadUint64(&c.localNonce)
+	if local < currentChainNonce {
+		atomic.StoreUint64(&c.localNonce, currentChainNonce)
+		local = currentChainNonce
+		log.Printf("[Nonce] 检测到链上nonce更新，本地已同步至%d", local)
+	}
+
+	// 分配当前nonce并递增
+	newNonce := local
+	atomic.StoreUint64(&c.localNonce, newNonce+1)
+
+	log.Printf("[Nonce] 分配nonce %d (链上:%d)", newNonce, currentChainNonce)
+	return newNonce, nil
+}
+
+// ForceSyncNonce 强制同步到链上最新状态
+func (c *EthClient) ForceSyncNonce(ctx context.Context, address common.Address) error {
+	c.nonceLock.Lock()
+	defer c.nonceLock.Unlock()
+
+	current, err := c.PendingNonceAt(ctx, address)
+	if err != nil {
+		return fmt.Errorf("强制同步失败: %v", err)
+	}
+
+	old := atomic.LoadUint64(&c.localNonce)
+	atomic.StoreUint64(&c.localNonce, current)
+
+	log.Printf("[Nonce] 强制同步完成：%d -> %d", old, current)
+	return nil
 }
 
 // SyncNonce 同步链上nonce的
