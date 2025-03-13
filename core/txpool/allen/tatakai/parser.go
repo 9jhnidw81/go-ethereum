@@ -3,6 +3,7 @@ package tatakai
 import (
 	"encoding/hex"
 	"fmt"
+	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -66,19 +67,19 @@ func (p *TransactionParser) ParseMethodAndParams(tx *types.Transaction) (*abi.Me
 	)
 
 	if len(tx.Data()) < 4 {
-		return nil, nil, ErrInvalidDataLen
+		return nil, nil, common2.ErrInvalidDataLen
 	}
 	methodData, txData := tx.Data()[:4], tx.Data()[4:]
 	methodID := hex.EncodeToString(methodData)
 
 	// 不是买入方法则直接退出过滤掉
 	if _, exists := uniswapMethods[methodID]; !exists {
-		return nil, nil, ErrNotBuyMethod
+		return nil, nil, common2.ErrNotBuyMethod
 	}
 
 	method, err := p.uniswapABI.MethodById(methodData)
 	if err != nil {
-		return nil, nil, ErrUnsupportedMethod
+		return nil, nil, common2.ErrUnsupportedMethod
 	}
 
 	// 解析交易参数
@@ -94,7 +95,7 @@ func (p *TransactionParser) IsBuyTransaction(params map[string]interface{}) (boo
 	// 获取交易路径
 	path, ok := params["path"].([]common.Address)
 	if !ok || len(path) < 2 {
-		return false, ErrInvalidPath
+		return false, common2.ErrInvalidPath
 	}
 
 	return path[0] == p.wethAddress, nil

@@ -3,16 +3,24 @@ package client
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/core/types"
 	"log"
 	"math/big"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+)
+
+var (
+	MyEthCli *EthClient
 )
 
 const (
@@ -26,15 +34,18 @@ type EthClient struct {
 	// 原子操作维护的本地nonce
 	localNonce uint64
 	nonceLock  sync.Mutex
+	// 原子变量记录首笔交易发送时的区块
+	firstTxBlock uint64
 }
 
 func NewEthClient(cfg *config.Config, client *ethclient.Client) (*EthClient, error) {
-	return &EthClient{
+	MyEthCli = &EthClient{
 		Client:     client,       // 继承的ethclient
 		Config:     cfg,          // 配置信息
 		localNonce: 0,            // 显式初始化本地nonce
 		nonceLock:  sync.Mutex{}, // 显式初始化互斥锁
-	}, nil
+	}
+	return MyEthCli, nil
 }
 
 // GetDynamicGasPrice 线上直接通过自建节点获取，无需通过三方节点
@@ -97,21 +108,92 @@ func (c *EthClient) ForceSyncNonce(ctx context.Context, address common.Address) 
 	return nil
 }
 
-// MonitorSendingTx 已发送交易监听
-func (c *EthClient) MonitorSendingTx(ctx context.Context, address common.Address) error {
-	c.nonceLock.Lock()
-	defer c.nonceLock.Unlock()
+// MonitorSendingTx 已发送交易监听，txs是三个交易的列表
+// 需要判断第一条交易是否超过5个区块，超过认为已经失败，调用ForceSyncNonce()
+func (c *EthClient) MonitorSendingTx(ctx context.Context, txs []*types.Transaction) error {
+	const (
+		checkInterval = 12 * time.Second // 区块时间按12秒估算
+		maxAttempts   = 10               // 最大尝试次数（约6分钟）
+	)
 
-	current, err := c.PendingNonceAt(ctx, address)
-	if err != nil {
-		return fmt.Errorf("强制同步失败: %v", err)
+	if len(txs) == 0 {
+		return errors.New("空交易列表")
 	}
 
-	old := atomic.LoadUint64(&c.localNonce)
-	atomic.StoreUint64(&c.localNonce, current)
+	firstTx := txs[0]
+	fromAddress, err := types.Sender(types.NewEIP155Signer(c.Config.ChainID), firstTx)
+	if err != nil {
+		return fmt.Errorf("解析发送地址失败: %w", err)
+	}
 
-	log.Printf("[Nonce] 强制同步完成：%d -> %d", old, current)
-	return nil
+	var (
+		lastCheckedBlock uint64
+		attempt          int
+	)
+
+	for attempt = 0; attempt < maxAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// 获取当前区块高度
+			currentBlock, err := c.BlockNumber(ctx)
+			if err != nil {
+				log.Printf("[Monitor] 获取区块高度失败: %v (重试 %d/%d)", err, attempt+1, maxAttempts)
+				time.Sleep(checkInterval)
+				continue
+			}
+
+			// 避免重复检查相同区块
+			if currentBlock <= lastCheckedBlock {
+				time.Sleep(checkInterval)
+				continue
+			}
+			lastCheckedBlock = currentBlock
+
+			// 检查首笔交易状态
+			receipt, err := c.TransactionReceipt(ctx, firstTx.Hash())
+			if err == ethereum.NotFound {
+				// 交易尚未被打包，检查区块延迟
+				startBlock := atomic.LoadUint64(&c.firstTxBlock)
+				if startBlock == 0 {
+					// 记录交易发送时的初始区块
+					atomic.StoreUint64(&c.firstTxBlock, currentBlock)
+					startBlock = currentBlock
+				}
+
+				elapsedBlocks := currentBlock - startBlock
+				if elapsedBlocks >= maxWaitingBlock {
+					log.Printf("[Monitor] 交易 %s 超过 %d 个区块未确认，强制重置nonce",
+						firstTx.Hash().Hex(), maxWaitingBlock)
+					if syncErr := c.ForceSyncNonce(ctx, fromAddress); syncErr != nil {
+						return fmt.Errorf("强制同步nonce失败: %v (原始错误: 交易未确认)", syncErr)
+					}
+					return common2.ErrTxStuck
+				}
+
+				log.Printf("[Monitor] 交易等待中: 已等待 %d/%d 个区块",
+					elapsedBlocks, maxWaitingBlock)
+				time.Sleep(checkInterval)
+				continue
+			} else if err != nil {
+				log.Printf("[Monitor] 获取交易回执失败: %v (重试 %d/%d)", err, attempt+1, maxAttempts)
+				time.Sleep(checkInterval)
+				continue
+			}
+
+			// 交易已确认，检查后续交易
+			if receipt.BlockNumber.Uint64() == 0 {
+				continue
+			}
+
+			log.Printf("[Monitor-Fight] 首笔交易 %s 已在区块 %d 确认",
+				firstTx.Hash().Hex(), receipt.BlockNumber.Uint64())
+			return nil // 首笔交易成功，停止监控
+		}
+	}
+
+	return fmt.Errorf("监控超时，已达最大尝试次数 %d", maxAttempts)
 }
 
 // SyncNonce 同步链上nonce的

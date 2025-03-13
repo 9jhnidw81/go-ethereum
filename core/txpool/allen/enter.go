@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/client"
+	"github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/tatakai"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -20,7 +21,7 @@ var (
 // Attack 进击吧，艾伦
 func Attack(ethClient *ethclient.Client) {
 	// 初始化客户端
-	cfg := config.Get(config.SepoliaYu)
+	cfg := config.Get(config.Sepolia)
 	myEthClient, err := client.NewEthClient(cfg, ethClient)
 	if err != nil {
 		log.Fatalf("[Attack] client.NewEthClient failed:%+v", err)
@@ -49,7 +50,7 @@ func loadPrivateKey() *ecdsa.PrivateKey {
 func Fight(tx *types.Transaction) {
 	bundle, err := SwBuilder.Build(context.Background(), tx)
 	if err != nil {
-		if err != tatakai.ErrNotUniswapTx && err != tatakai.ErrNotBuyMethod && err != tatakai.ErrNotUniswapBuyTx {
+		if err != common.ErrNotUniswapTx && err != common.ErrNotBuyMethod && err != common.ErrNotUniswapBuyTx {
 			log.Printf("[Fight] build failed: %v", err)
 		}
 		return
@@ -68,5 +69,9 @@ func Fight(tx *types.Transaction) {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v\n\n\n", bundle)
+		go func() {
+			err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
+			log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)
+		}()
 	}
 }

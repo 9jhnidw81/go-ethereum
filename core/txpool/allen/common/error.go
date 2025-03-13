@@ -1,4 +1,4 @@
-package tatakai
+package common
 
 import "errors"
 
@@ -10,4 +10,5 @@ var (
 	ErrInvalidDataLen    = errors.New("tx date len invalid")
 	ErrNotBuyMethod      = errors.New("not in buy method map")
 	ErrNotEnoughProfit   = errors.New("not enough profit")
+	ErrTxStuck           = errors.New("交易长时间未确认")
 )

@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/client"
+	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/crypto"
 	"log"
@@ -73,7 +74,7 @@ func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, 
 func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*types.Transaction, error) {
 	// To地址判断
 	if tx.To() == nil || *tx.To() != b.parser.routerAddress {
-		return nil, ErrNotUniswapTx
+		return nil, common2.ErrNotUniswapTx
 	}
 	// 解析方法跟参数
 	method, params, err := b.parser.ParseMethodAndParams(tx)
@@ -86,7 +87,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !ok {
-		return nil, ErrNotUniswapBuyTx
+		return nil, common2.ErrNotUniswapBuyTx
 	}
 
 	// 同步链上nonce
