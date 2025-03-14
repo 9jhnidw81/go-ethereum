@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+// TODO: 动态递增gas (如果连续成功好几次，但是没有一次真正的成功，则考虑动态递增gas，有最高限制)
 const (
 	// 买入滑点
 	slipPointBuy = 5
@@ -119,10 +120,14 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	// 授权 TODO： 多个tx同一个token，导致多次授权->前者的txs的nonce失效
+	var (
+		approveTx   *types.Transaction
+		needApprove bool
+	)
 	if allowance.Cmp(big.NewInt(0)) == 0 && !b.isTokenApproved(path[1]) {
 		amountIn := new(big.Int)
 		amountIn.SetString(maxApproveAmount, 16)
-		err = b.approveTokens(ctx, path[1], amountIn, gasPrice, frontNonce)
+		approveTx, err = b.approveTokens(ctx, path[1], amountIn, gasPrice, frontNonce)
 		fmt.Println("授权", path[1], "err:", err)
 		if err != nil {
 			// 立即强制同步nonce
@@ -131,6 +136,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 			return nil, err
 		} else {
 			b.setTokenApprove(path[1])
+			needApprove = true
 			frontNonce++ // TODO: 这里会有问题，假设授权没报错，但是三明治攻击失败，nonce已经递增了，此时会导致后面的nonce全部失败？
 			backNonce++  // TODO: 可能需要定期检查nonce有效性？或者监控三明治攻击失败的时候，用自转0eth的方式重新清洗nonce？
 		}
@@ -140,25 +146,11 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if err != nil {
 		return nil, err
 	}
-	// 普通发送
-	//err = b.ethClient.SendTransaction(context.Background(), frontTx)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//fmt.Println("发送买入交易成功")
-
-	// 另外起一个协程，额度授权
-
 	backTx, err := b.buildBackRunTx(ctx, frontTx, tx, gasPrice, method, params, backNonce)
 	if err != nil {
 		return nil, err
 	}
-	// 普通发送
-	//err = b.ethClient.SendTransaction(context.Background(), backTx)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//fmt.Println("发送卖出交易成功")
+
 	pairAddress, err := b.GetPairAddress(path[0], path[1])
 	if err != nil {
 		return nil, err
@@ -186,6 +178,9 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		//return nil, ErrNotEnoughProfit
 	}
 
+	if needApprove && approveTx != nil {
+		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
+	}
 	return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
@@ -566,13 +561,12 @@ func (b *SandwichBuilder) getAllowance(ctx context.Context, tokenAddr, spender c
 }
 
 // 授权
-func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) error {
+func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) (*types.Transaction, error) {
 	// 打包调用数据
 	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, amountIn)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	approveCallMsg := ethereum.CallMsg{
 		From: b.FromAddress,
 		To:   &tokenAddr,
@@ -598,17 +592,16 @@ func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Ad
 
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(b.ethClient.Config.ChainID), b.privateKey)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// 发送交易
-	err = b.ethClient.SendTransaction(context.Background(), signedTx)
-	if err != nil {
-		return err
-	}
+	//// 发送交易,直接发给矿工一起打包发送
+	//err = b.ethClient.SendTransaction(context.Background(), signedTx)
+	//if err != nil {
+	//	return err
+	//}
 
-	fmt.Println("Tokens approved for spending.")
-	return nil
+	return signedTx, nil
 }
 
 // 获取受害者原始交易的实际输入量
