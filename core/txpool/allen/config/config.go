@@ -7,9 +7,8 @@ import (
 type Network string
 
 const (
-	Sepolia   Network = "sepolia"
-	SepoliaYu Network = "sepolia-yu"
-	Mainnet   Network = "mainnet"
+	Sepolia Network = "sepolia"
+	Mainnet Network = "mainnet"
 )
 
 const (
@@ -26,11 +25,13 @@ const (
 )
 
 const (
-	MethodSwapExactETHForTokens                              = "swapExactETHForTokens"                              // 直接用ETH买入
-	MethodSwapExactTokensForTokens                           = "swapExactTokensForTokens"                           // 可以是卖出也可以是买入，需要额外判断, 固定输入量，求最大输出
-	MethodSwapTokensForExactTokens                           = "swapTokensForExactTokens"                           // 可以是卖出也可以是买入, 需要额外判断, 固定输出量，求最小输入
-	MethodSwapETHForExactTokens                              = "swapETHForExactTokens"                              // 有固定ETH换最多代币
-	MethodSwapExactETHForTokensSupportingFeeOnTransferTokens = "swapExactETHForTokensSupportingFeeOnTransferTokens" // 有固定ETH换最多代币
+	MethodSwapExactETHForTokens                                 = "swapExactETHForTokens"                                 // 直接用ETH买入
+	MethodSwapExactTokensForTokens                              = "swapExactTokensForTokens"                              // 固定输入量，求最大输出，可以是卖出也可以是买入，需要额外判断
+	MethodSwapTokensForExactTokens                              = "swapTokensForExactTokens"                              // 固定输出量，求最小输入，可以是卖出也可以是买入，需要额外判断
+	MethodSwapETHForExactTokens                                 = "swapETHForExactTokens"                                 // 有固定ETH换最多代币
+	MethodSwapExactETHForTokensSupportingFeeOnTransferTokens    = "swapExactETHForTokensSupportingFeeOnTransferTokens"    // 有固定ETH换最多代币
+	MethodSwapExactTokensForETHSupportingFeeOnTransferTokens    = "swapExactTokensForETHSupportingFeeOnTransferTokens"    // ETH卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
+	MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens = "swapExactTokensForTokensSupportingFeeOnTransferTokens" // 代币卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
 )
 
 type Config struct {
@@ -38,7 +39,9 @@ type Config struct {
 	FlashbotsEndpoint string
 	RouterAddress     string
 	WETHAddress       string
+	InTokenAddress    string // 作为买代币的砝码
 	FactoryAddress    string
+	FactoryAddress2   string // 可能需要借助三方工厂获取代币地址
 	RouterAbi         string
 	PairAbi           string
 	FactoryAbi        string
@@ -61,27 +64,10 @@ func Get(network Network) *Config {
 			RPCURL:            "wss://sepolia.infura.io/ws/v3/",
 			FlashbotsEndpoint: "https://relay-sepolia.flashbots.net",
 			RouterAddress:     "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3", // v2
-			WETHAddress:       "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
-			FactoryAddress:    "0xF62c03E08ada871A0bEb309762E260a7a6a880E6",
-			RouterAbi:         UniswapV2RouterAbi,
-			PairAbi:           UniswapPairAbi,
-			Erc20Abi:          Erc20Abi,
-			FactoryAbi:        FactoryAbi,
-			ChainID:           big.NewInt(11155111),
-			GasConfig: GasConfig{
-				MaxGasGwei:     150,
-				BaseMultiplier: 5, // gas价格倍数
-				Slippage:       0.05,
-			},
-		}
-	case SepoliaYu:
-		// 测试网只会跑最新的uniswap，用不到v2
-		return &Config{
-			RPCURL:            "wss://sepolia.infura.io/ws/v3/",
-			FlashbotsEndpoint: "https://relay-sepolia.flashbots.net",
-			WETHAddress:       "0xcB856bC5Aa2664E47c9caDce6fF65117c5201a1C", // yu
-			RouterAddress:     "0xc532a74256d3db42d0bf7a0400fefdbad7694008", // v2,私人部署的
-			FactoryAddress:    "0x7E0987E5b3a30e3f2828572Bb659A548460a3003", // 私人部署的
+			WETHAddress:       "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", // weth
+			InTokenAddress:    "0xcB856bC5Aa2664E47c9caDce6fF65117c5201a1C", // yu代币
+			FactoryAddress:    "0xF62c03E08ada871A0bEb309762E260a7a6a880E6", // uniswap v2通用工厂地址
+			FactoryAddress2:   "0x7E0987E5b3a30e3f2828572Bb659A548460a3003", // yu代币工厂地址
 			RouterAbi:         UniswapV2RouterAbi,
 			PairAbi:           UniswapPairAbi,
 			Erc20Abi:          Erc20Abi,

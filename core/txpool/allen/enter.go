@@ -28,7 +28,7 @@ func Attack(ethClient *ethclient.Client) {
 	}
 
 	// uniswap解析器
-	parser, _ := tatakai.NewParser(cfg.RouterAddress, cfg.WETHAddress, cfg.FactoryAddress, cfg.RouterAbi, cfg.Erc20Abi, cfg.PairAbi, cfg.FactoryAbi)
+	parser, _ := tatakai.NewParser(cfg)
 
 	// 三明治构建器
 	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey())

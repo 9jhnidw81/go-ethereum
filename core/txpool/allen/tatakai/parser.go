@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
+	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -22,41 +23,45 @@ var uniswapMethods = map[string]string{
 
 // TransactionParser 交易解析器
 type TransactionParser struct {
-	routerAddress  common.Address
-	wethAddress    common.Address
-	factoryAddress common.Address
-	uniswapABI     abi.ABI
-	erc20ABI       abi.ABI
-	pairABI        abi.ABI
-	factoryABI     abi.ABI
+	routerAddress   common.Address
+	wethAddress     common.Address
+	inTokenAddress  common.Address
+	factoryAddress  common.Address
+	factoryAddress2 common.Address
+	uniswapABI      abi.ABI
+	erc20ABI        abi.ABI
+	pairABI         abi.ABI
+	factoryABI      abi.ABI
 }
 
-func NewParser(routerAddr, wethAddr, factoryAddr, uniswapAbi, erc20Abi, pairAbi, factoryAbi string) (*TransactionParser, error) {
-	uniswapABI, err := abi.JSON(strings.NewReader(uniswapAbi))
+func NewParser(cfg *config.Config) (*TransactionParser, error) {
+	uniswapABI, err := abi.JSON(strings.NewReader(cfg.RouterAbi))
 	if err != nil {
 		return nil, fmt.Errorf("解析UniswapABI失败: %v", err)
 	}
-	erc20ABI, err := abi.JSON(strings.NewReader(erc20Abi))
+	erc20ABI, err := abi.JSON(strings.NewReader(cfg.Erc20Abi))
 	if err != nil {
 		return nil, fmt.Errorf("解析Erc20ABI失败: %v", err)
 	}
-	pairABI, err := abi.JSON(strings.NewReader(pairAbi))
+	pairABI, err := abi.JSON(strings.NewReader(cfg.PairAbi))
 	if err != nil {
 		return nil, fmt.Errorf("解析PairABI失败: %v", err)
 	}
-	factoryABI, err := abi.JSON(strings.NewReader(factoryAbi))
+	factoryABI, err := abi.JSON(strings.NewReader(cfg.FactoryAbi))
 	if err != nil {
 		return nil, fmt.Errorf("解析FactoryABI失败: %v", err)
 	}
 
 	return &TransactionParser{
-		routerAddress:  common.HexToAddress(routerAddr),
-		wethAddress:    common.HexToAddress(wethAddr),
-		factoryAddress: common.HexToAddress(factoryAddr),
-		uniswapABI:     uniswapABI,
-		erc20ABI:       erc20ABI,
-		pairABI:        pairABI,
-		factoryABI:     factoryABI,
+		routerAddress:   common.HexToAddress(cfg.RouterAddress),
+		wethAddress:     common.HexToAddress(cfg.WETHAddress),
+		inTokenAddress:  common.HexToAddress(cfg.InTokenAddress),
+		factoryAddress:  common.HexToAddress(cfg.FactoryAddress),
+		factoryAddress2: common.HexToAddress(cfg.FactoryAddress2),
+		uniswapABI:      uniswapABI,
+		erc20ABI:        erc20ABI,
+		pairABI:         pairABI,
+		factoryABI:      factoryABI,
 	}, nil
 }
 
@@ -98,5 +103,5 @@ func (p *TransactionParser) IsBuyTransaction(params map[string]interface{}) (boo
 		return false, common2.ErrInvalidPath
 	}
 
-	return path[0] == p.wethAddress, nil
+	return path[0] == p.wethAddress || path[0] == p.inTokenAddress, nil
 }
