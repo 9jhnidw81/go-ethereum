@@ -27,11 +27,11 @@ const (
 	// 卖出滑点
 	slipPointSell = 2
 	// gas滑点
-	slipPointGas = 800
+	slipPointGas = 900
 	// 授权gas滑点
 	approveSlipPointGas = 300
 	// gas价格滑点
-	slipPointGasPrice = 800
+	slipPointGasPrice = 900
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 默认gas(用于首次卖出代币，无法计算gas值的备选)
