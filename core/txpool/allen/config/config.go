@@ -29,6 +29,7 @@ const (
 	MethodSwapExactTokensForTokens                              = "swapExactTokensForTokens"                              // 固定输入量，求最大输出，可以是卖出也可以是买入，需要额外判断
 	MethodSwapTokensForExactTokens                              = "swapTokensForExactTokens"                              // 固定输出量，求最小输入，可以是卖出也可以是买入，需要额外判断
 	MethodSwapETHForExactTokens                                 = "swapETHForExactTokens"                                 // 有固定ETH换最多代币
+	MethodSwapExactTokensForETH                                 = "swapExactTokensForETH"                                 // ETH卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
 	MethodSwapExactETHForTokensSupportingFeeOnTransferTokens    = "swapExactETHForTokensSupportingFeeOnTransferTokens"    // 有固定ETH换最多代币
 	MethodSwapExactTokensForETHSupportingFeeOnTransferTokens    = "swapExactTokensForETHSupportingFeeOnTransferTokens"    // ETH卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
 	MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens = "swapExactTokensForTokensSupportingFeeOnTransferTokens" // 代币卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换

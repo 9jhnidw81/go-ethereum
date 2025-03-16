@@ -23,19 +23,19 @@ import (
 // TODO: 动态递增gas (如果连续成功好几次，但是没有一次真正的成功，则考虑动态递增gas，有最高限制)
 const (
 	// 买入滑点
-	slipPointBuy = 5
+	slipPointBuy = 10
 	// 卖出滑点
-	slipPointSell = 2
+	slipPointSell = 50
 	// gas滑点
-	slipPointGas = 900
+	slipPointGas = 2000
 	// 授权gas滑点
-	approveSlipPointGas = 300
+	approveSlipPointGas = 200
 	// gas价格滑点
-	slipPointGasPrice = 900
+	slipPointGasPrice = 4000
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 默认gas(用于首次卖出代币，无法计算gas值的备选)
-	defaultGas uint64 = 190000
+	defaultGas uint64 = 400000
 	// 最大授权额度
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
@@ -69,6 +69,12 @@ func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, 
 		FromAddress: crypto.PubkeyToAddress(pk.PublicKey),
 	}
 }
+
+//单例模式测试
+//直接发送2笔买入卖出的eth、yu交易，看看能不能成功，能成功再去夹其他人
+//不管是提高手续费，还是啥反正一定要成功买入卖出再夹别人
+//
+//提高到超级高gas
 
 func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*types.Transaction, error) {
 	// To地址判断
@@ -117,7 +123,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if err != nil {
 		return nil, err
 	}
-	// 授权 TODO： 多个tx同一个token，导致多次授权->前者的txs的nonce失效
+	// 授权
 	var (
 		approveTx   *types.Transaction
 		needApprove bool
@@ -169,12 +175,14 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	if !isProfitable {
 		//return nil, ErrNotEnoughProfit
+		//return nil, errors.New("1")
 	}
 
 	if needApprove && approveTx != nil {
 		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
 	}
-	return []*types.Transaction{frontTx, tx, backTx}, nil
+	return []*types.Transaction{frontTx, backTx}, nil
+	//return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
 // 构建买入交易（前跑）
@@ -210,13 +218,14 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	// 计算前导交易量（受害者交易量的60%）
 	frontInAmount = new(big.Int).Mul(victimInAmount, big.NewInt(frontRunRatio))
 	frontInAmount.Div(frontInAmount, big.NewInt(100))
+	fmt.Println("frontInAmount", frontInAmount)
 
 	// 模拟前导交易影响
 	frontEffective := new(big.Int).Mul(frontInAmount, big.NewInt(997))
 	frontEffective.Div(frontEffective, big.NewInt(1000))
 	frontTokenOut := calculateOutputAmount(frontEffective, poolInToken, poolOutToken)
 
-	// 重新计算最小输出（基于前导量）
+	// 重新计算最小输出（基于前导量）, 可以根据调用路由合约的 getAmountsOut 判断现在能接收到的价格
 	minAmountOut := CalculateWithSlippageEx(frontTokenOut, slipPointBuy)
 
 	// 构造交易数据
@@ -225,6 +234,12 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		// ETH兑换
 		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
+			big.NewInt(1189150), // 愿意接受的 最少能换到多少代币，少于会失败
+			swapParams.Path,     // 兑换代币的路径
+			b.FromAddress,       // 接收代币的路径
+			deadline,            // 过期时间
+		)
+		fmt.Println("需要ETH兑换的打包参数", config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
 			minAmountOut,
 			swapParams.Path,
 			b.FromAddress,
@@ -233,11 +248,11 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	} else {
 		// 代币兑换
 		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens,
-			frontInAmount,
-			minAmountOut,
-			swapParams.Path,
-			b.FromAddress,
-			deadline,
+			frontInAmount,   // 花出去的 代币 A 的数量
+			minAmountOut,    // 愿意接受的 最少能换到多少代币 B
+			swapParams.Path, // 兑换代币的路径 [代币A, 代币B]
+			b.FromAddress,   // 接收代币的地址
+			deadline,        // 过期时间
 		)
 	}
 
@@ -257,12 +272,14 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		callMsg.Value = frontInAmount // ETH兑换，则为value
 	}
+	fmt.Printf("请求计算gas的参数:%+v\n", callMsg)
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, callMsg)
+	fmt.Println("预计需要耗费的gas", estimatedGas, err)
 	// 处理gas估算错误
-	if err == nil {
+	if estimatedGas > 0 {
 		gasLimit = estimatedGas
 	}
-
+	fmt.Println("gasLimitgasLimit", gasLimit, CalculateUint64SlipPoint(gasLimit, slipPointGas))
 	// 构建并签名交易
 	txInner := &types.LegacyTx{
 		Nonce:    frontNonce,
@@ -275,6 +292,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		txInner.Value = frontInAmount // ETH兑换，则为value
 	}
+	fmt.Printf("构建签名交易的参数:%+v\n", txInner)
 	tx := types.NewTx(txInner)
 	fmt.Printf("[Fight] Front tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 
@@ -304,7 +322,8 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 	}
 
 	// 获取输出资产类型，是否ETH
-	outputIsETH := path[1] == b.parser.wethAddress
+	outputIsETH := path[0] == b.parser.wethAddress
+	fmt.Println("pathpathpath", path, b.parser.wethAddress)
 
 	// 模拟前导交易影响，即模拟前导输入得到输出
 	frontEffective := new(big.Int).Mul(frontInAmount, big.NewInt(997))
@@ -337,17 +356,19 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
 	reversePath := ReversePath(path)
 	methodName := config.MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens // 默认代币兑换代币
+	fmt.Println("outputisETH", outputIsETH)
 	if outputIsETH {
-		methodName = config.MethodSwapExactTokensForETHSupportingFeeOnTransferTokens // 否则为卖出eth
+		methodName = config.MethodSwapExactTokensForETH // 否则为卖出eth
 	}
 	data, err := b.parser.uniswapABI.Pack(methodName,
-		frontTokenOut, // 卖出的代币的精确数量，使用前导获得的全部代币
-		amountOutMin,  // 动态计算卖出代币时的最小可接受ETH数量
-		reversePath,   // 交易路径[代币地址, WETH地址]
+		frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币 // 花多少代币A去换 ETH
+		big.NewInt(0), // 愿意接受的 最少能换到多少 ETH // 最少换到多少 ETH
+		reversePath,   // 交易路径[代币A, 代币B] [代币地址, WETH地址]
 		b.FromAddress, // ETH接收地址
 		deadline,      // 交易过期时间戳
 	)
-	fmt.Println(frontTokenOut, amountOutMin, reversePath, b.FromAddress, deadline)
+	fmt.Println("卖出交易的打包参数", methodName, frontTokenOut, amountOutMin, reversePath, b.FromAddress, deadline)
+	//fmt.Println(frontTokenOut, amountOutMin, reversePath, b.FromAddress, deadline)
 	if err != nil {
 		return nil, fmt.Errorf("交易数据构造失败: %w", err)
 	}
@@ -355,6 +376,12 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 	// 修改后的gas估算逻辑
 	gasLimit := defaultGas
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, ethereum.CallMsg{
+		From:     b.FromAddress,
+		To:       frontTx.To(),
+		GasPrice: gasPrice,
+		Data:     data,
+	})
+	fmt.Printf("请求计算gas的参数:%+v\n", ethereum.CallMsg{
 		From:     b.FromAddress,
 		To:       frontTx.To(),
 		GasPrice: gasPrice,
@@ -374,6 +401,7 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		To:       frontTx.To(),
 		Data:     data,
 	}
+	fmt.Printf("构建签名交易的参数:%+v\n", txInner)
 	tx := types.NewTx(txInner)
 	fmt.Printf("[Fight] Back tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 
@@ -627,10 +655,11 @@ func (b *SandwichBuilder) isArbitrageProfitable(
 // 辅助方法：获取资金池储备
 func (b *SandwichBuilder) getPoolReserves(ctx context.Context, pairAddress *common.Address, inputIsETH bool) (*big.Int, *big.Int, error) {
 	var reserves struct {
-		Reserve0           *big.Int `abi:"_reserve0"`
-		Reserve1           *big.Int `abi:"_reserve1"`
-		BlockTimestampLast uint32   `abi:"_blockTimestampLast"`
+		Reserve0           *big.Int `abi:"_reserve0"`           // 代币 token0 的当前储备量，两个代币之间最小的在前面
+		Reserve1           *big.Int `abi:"_reserve1"`           // 代币 token1 的当前储备量，两个代币之间最小的在后面
+		BlockTimestampLast uint32   `abi:"_blockTimestampLast"` // 最后一次更新储备量的区块时间戳
 	}
+	fmt.Println("pairAddress", pairAddress)
 
 	// 调用合约方法
 	data, _ := b.parser.pairABI.Pack("getReserves")
@@ -646,10 +675,12 @@ func (b *SandwichBuilder) getPoolReserves(ctx context.Context, pairAddress *comm
 	if err := b.parser.pairABI.UnpackIntoInterface(&reserves, "getReserves", result); err != nil {
 		return nil, nil, err
 	}
+	fmt.Println("reservesreserves", reserves)
 
 	// 获取交易对代币地址
 	token0Addr, _ := b.getTokenAddress(ctx, pairAddress, "token0")
 	token1Addr, _ := b.getTokenAddress(ctx, pairAddress, "token1")
+	fmt.Println("to", token0Addr, token1Addr)
 
 	// 动态判断储备顺序
 	switch {
