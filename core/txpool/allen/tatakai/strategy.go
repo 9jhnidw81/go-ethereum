@@ -25,13 +25,13 @@ const (
 	// 买入滑点
 	slipPointBuy = 10
 	// 卖出滑点
-	slipPointSell = 50
+	slipPointSell = 90
 	// gas滑点
-	slipPointGas = 2000
+	slipPointGas = 700
 	// 授权gas滑点
 	approveSlipPointGas = 200
 	// gas价格滑点
-	slipPointGasPrice = 4000
+	slipPointGasPrice = 700
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 默认gas(用于首次卖出代币，无法计算gas值的备选)
@@ -39,7 +39,7 @@ const (
 	// 最大授权额度
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
-	frontRunRatio = 60
+	frontRunRatio = 80
 	// 后导交易量比例 60%
 	backRunRatio = 60
 )
@@ -150,7 +150,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if err != nil {
 		return nil, err
 	}
-	backTx, err := b.buildBackRunTx(ctx, frontTx, frontInAmount, victimInAmount, gasPrice, params, backNonce)
+	backTx, err := b.buildBackRunTx(ctx, frontTx, frontInAmount, victimInAmount, gasPrice, params["path"].([]common.Address), backNonce)
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +203,9 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	// 获取输入资产类型，是否ETH
 	inputIsETH := path[0] == b.parser.wethAddress
 
+	// 获取当前交易对的储备量
 	pairAddress, err := b.GetPairAddress(path[0], path[1])
-	poolInToken, poolOutToken, err := b.getPoolReserves(ctx, &pairAddress, inputIsETH)
+	poolInToken, poolOutToken, err := b.getPoolReserves(ctx, &pairAddress, path[0], path[1])
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("[%s] 获取资金池储备失败: %w", methodPrefix, err)
 	}
@@ -218,15 +219,15 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	// 计算前导交易量（受害者交易量的60%）
 	frontInAmount = new(big.Int).Mul(victimInAmount, big.NewInt(frontRunRatio))
 	frontInAmount.Div(frontInAmount, big.NewInt(100))
-	fmt.Println("frontInAmount", frontInAmount)
+	// 模拟输入交易扣除的手续费，这里是0.3%
+	effectiveInput := new(big.Int).Mul(frontInAmount, big.NewInt(997))
+	effectiveInput.Div(effectiveInput, big.NewInt(1000))
 
-	// 模拟前导交易影响
-	frontEffective := new(big.Int).Mul(frontInAmount, big.NewInt(997))
-	frontEffective.Div(frontEffective, big.NewInt(1000))
-	frontTokenOut := calculateOutputAmount(frontEffective, poolInToken, poolOutToken)
+	// 预期通过输入得到的代币数量
+	frontTokenOut := calculateOutputAmount(effectiveInput, poolInToken, poolOutToken)
 
-	// 重新计算最小输出（基于前导量）, 可以根据调用路由合约的 getAmountsOut 判断现在能接收到的价格
-	minAmountOut := CalculateWithSlippageEx(frontTokenOut, slipPointBuy)
+	// 重新计算最小输出（基于前导量+负滑点）, 可以根据调用路由合约的 getAmountsOut 判断现在能接收到的价格是否合理
+	minAmountOut := CalculateWithSlippageEx(frontTokenOut, -slipPointBuy)
 
 	// 构造交易数据
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
@@ -234,22 +235,16 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		// ETH兑换
 		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
-			big.NewInt(1189150), // 愿意接受的 最少能换到多少代币，少于会失败
-			swapParams.Path,     // 兑换代币的路径
-			b.FromAddress,       // 接收代币的路径
-			deadline,            // 过期时间
-		)
-		fmt.Println("需要ETH兑换的打包参数", config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
-			minAmountOut,
-			swapParams.Path,
-			b.FromAddress,
-			deadline,
+			minAmountOut,    // 愿意接受的 最少能换到多少代币，少于会失败
+			swapParams.Path, // 兑换代币的路径 [weth, token]
+			b.FromAddress,   // 接收代币的路径
+			deadline,        // 过期时间
 		)
 	} else {
 		// 代币兑换
 		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens,
 			frontInAmount,   // 花出去的 代币 A 的数量
-			minAmountOut,    // 愿意接受的 最少能换到多少代币 B
+			minAmountOut,    // 愿意接受的 最少能换到多少代币 B，少于会失败
 			swapParams.Path, // 兑换代币的路径 [代币A, 代币B]
 			b.FromAddress,   // 接收代币的地址
 			deadline,        // 过期时间
@@ -272,14 +267,13 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		callMsg.Value = frontInAmount // ETH兑换，则为value
 	}
-	fmt.Printf("请求计算gas的参数:%+v\n", callMsg)
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, callMsg)
-	fmt.Println("预计需要耗费的gas", estimatedGas, err)
+	fmt.Println("[Fight] 前导交易预计需要耗费的gas", estimatedGas, err)
 	// 处理gas估算错误
 	if estimatedGas > 0 {
 		gasLimit = estimatedGas
 	}
-	fmt.Println("gasLimitgasLimit", gasLimit, CalculateUint64SlipPoint(gasLimit, slipPointGas))
+	fmt.Println("[Fight] GasLimit", gasLimit, "GasLimit+滑点", CalculateUint64SlipPoint(gasLimit, slipPointGas))
 	// 构建并签名交易
 	txInner := &types.LegacyTx{
 		Nonce:    frontNonce,
@@ -292,7 +286,6 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 	if inputIsETH {
 		txInner.Value = frontInAmount // ETH兑换，则为value
 	}
-	fmt.Printf("构建签名交易的参数:%+v\n", txInner)
 	tx := types.NewTx(txInner)
 	fmt.Printf("[Fight] Front tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 
@@ -305,39 +298,35 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 }
 
 // 构建卖入交易（后跑）
-func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Transaction, frontInAmount, victimInAmount, gasPrice *big.Int, params map[string]interface{}, backNonce uint64) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Transaction, frontInAmount, victimInAmount, gasPrice *big.Int, path []common.Address, backNonce uint64) (*types.Transaction, error) {
 	const (
 		methodPrefix = "buildBackRunTx"
 	)
 	// 获取当前资金池储备
-	path := params["path"].([]common.Address)
-
-	// 获取输入资产类型，是否ETH
-	inputIsETH := path[0] == b.parser.wethAddress
-
 	pairAddress, err := b.GetPairAddress(path[0], path[1])
-	poolInToken, poolOutToken, err := b.getPoolReserves(ctx, &pairAddress, inputIsETH)
+	poolInToken, poolOutToken, err := b.getPoolReserves(ctx, &pairAddress, path[0], path[1])
 	if err != nil {
 		return nil, fmt.Errorf("[%s] 获取资金池储备失败: %w", methodPrefix, err)
 	}
 
 	// 获取输出资产类型，是否ETH
 	outputIsETH := path[0] == b.parser.wethAddress
-	fmt.Println("pathpathpath", path, b.parser.wethAddress)
 
 	// 模拟前导交易影响，即模拟前导输入得到输出
 	frontEffective := new(big.Int).Mul(frontInAmount, big.NewInt(997))
 	frontEffective.Div(frontEffective, big.NewInt(1000))
 	frontTokenOut := calculateOutputAmount(frontEffective, poolInToken, poolOutToken)
-	reserveAfterFrontWETH := new(big.Int).Sub(poolInToken, frontEffective)
-	reserveAfterFrontToken := new(big.Int).Add(poolOutToken, frontTokenOut)
+	// 模拟前导交易之后的weth储备量
+	reserveAfterFrontWETH := new(big.Int).Add(poolInToken, frontEffective)
+	// 模拟前导交易之后的token储备量
+	reserveAfterFrontToken := new(big.Int).Sub(poolOutToken, frontTokenOut)
 
 	// 模拟受害者交易影响
 	victimEffective := new(big.Int).Mul(victimInAmount, big.NewInt(997))
 	victimEffective.Div(victimEffective, big.NewInt(1000))
 	victimTokenOut := calculateOutputAmount(victimEffective, reserveAfterFrontWETH, reserveAfterFrontToken)
 
-	// 最终储备状态
+	// 受害者买入之后的储备量
 	finalReserveWETH := new(big.Int).Add(reserveAfterFrontWETH, victimEffective)
 	finalReserveToken := new(big.Int).Sub(reserveAfterFrontToken, victimTokenOut)
 
@@ -347,18 +336,18 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 	expectedETH := calculateOutputAmount(backEffective, finalReserveToken, finalReserveWETH)
 
 	// 动态滑点计算
-	amountOutMin := CalculateWithSlippageEx(expectedETH, slipPointSell)
+	amountOutMin := CalculateWithSlippageEx(expectedETH, -slipPointSell)
 	if amountOutMin.Cmp(common.Big0) <= 0 {
 		return nil, fmt.Errorf("[%s] 无效滑点计算 预期ETH/InToken:%s", methodPrefix, expectedETH.String())
 	}
+	fmt.Printf("[Fight] 后导预期输入的token数量:%+v, 预期得到的eth数量:%+v, 减去滑点之后预期得到的eth数量:%+v\n", backEffective, expectedETH, amountOutMin)
 
 	// 构造交易数据
 	deadline := big.NewInt(time.Now().Add(expireTime).Unix())
 	reversePath := ReversePath(path)
 	methodName := config.MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens // 默认代币兑换代币
-	fmt.Println("outputisETH", outputIsETH)
 	if outputIsETH {
-		methodName = config.MethodSwapExactTokensForETH // 否则为卖出eth
+		methodName = config.MethodSwapExactTokensForETHSupportingFeeOnTransferTokens // 否则为卖出eth
 	}
 	data, err := b.parser.uniswapABI.Pack(methodName,
 		frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币 // 花多少代币A去换 ETH
@@ -368,7 +357,6 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		deadline,      // 交易过期时间戳
 	)
 	fmt.Println("卖出交易的打包参数", methodName, frontTokenOut, amountOutMin, reversePath, b.FromAddress, deadline)
-	//fmt.Println(frontTokenOut, amountOutMin, reversePath, b.FromAddress, deadline)
 	if err != nil {
 		return nil, fmt.Errorf("交易数据构造失败: %w", err)
 	}
@@ -381,15 +369,15 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		GasPrice: gasPrice,
 		Data:     data,
 	})
-	fmt.Printf("请求计算gas的参数:%+v\n", ethereum.CallMsg{
+	fmt.Printf("[Fight] 后导模拟计算建议gas请求计算gas的参数:%+v, err:%+v\n", ethereum.CallMsg{
 		From:     b.FromAddress,
 		To:       frontTx.To(),
 		GasPrice: gasPrice,
 		Data:     data,
-	})
+	}, err)
 
 	// 处理gas估算错误
-	if err == nil {
+	if estimatedGas > 0 {
 		gasLimit = estimatedGas
 	}
 
@@ -401,7 +389,6 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		To:       frontTx.To(),
 		Data:     data,
 	}
-	fmt.Printf("构建签名交易的参数:%+v\n", txInner)
 	tx := types.NewTx(txInner)
 	fmt.Printf("[Fight] Back tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 
@@ -576,7 +563,7 @@ func (b *SandwichBuilder) isArbitrageProfitable(
 		if err != nil {
 			return false, fmt.Errorf("找不到WETH交易对: %v", err)
 		}
-		reserveToken, reserveWETH, err := b.getPoolReserves(ctx, &tokenWethPair, false)
+		reserveToken, reserveWETH, err := b.getPoolReserves(ctx, &tokenWethPair, path[0], path[1])
 		if err != nil {
 			return false, err
 		}
@@ -592,7 +579,7 @@ func (b *SandwichBuilder) isArbitrageProfitable(
 
 	// 3. 核心套利计算逻辑
 	// 获取初始储备（自动处理ETH/代币顺序）
-	reserveIn, reserveOut, err := b.getPoolReserves(ctx, pairAddress, inputIsETH)
+	reserveIn, reserveOut, err := b.getPoolReserves(ctx, pairAddress, path[0], path[1])
 	if err != nil {
 		return false, err
 	}
@@ -625,7 +612,7 @@ func (b *SandwichBuilder) isArbitrageProfitable(
 		if err != nil {
 			return false, fmt.Errorf("无法获取输出代币价格: %v", err)
 		}
-		reserveToken, reserveWETH, err := b.getPoolReserves(ctx, &outputPair, false)
+		reserveToken, reserveWETH, err := b.getPoolReserves(ctx, &outputPair, path[0], path[1])
 		if err != nil {
 			return false, err
 		}
@@ -653,13 +640,13 @@ func (b *SandwichBuilder) isArbitrageProfitable(
 }
 
 // 辅助方法：获取资金池储备
-func (b *SandwichBuilder) getPoolReserves(ctx context.Context, pairAddress *common.Address, inputIsETH bool) (*big.Int, *big.Int, error) {
+// 按照输入代币, 输出代币的顺序返回, 比如weth兑换link, 则返回weth,link
+func (b *SandwichBuilder) getPoolReserves(ctx context.Context, pairAddress *common.Address, tokenA, tokenB common.Address) (*big.Int, *big.Int, error) {
 	var reserves struct {
-		Reserve0           *big.Int `abi:"_reserve0"`           // 代币 token0 的当前储备量，两个代币之间最小的在前面
-		Reserve1           *big.Int `abi:"_reserve1"`           // 代币 token1 的当前储备量，两个代币之间最小的在后面
+		Reserve0           *big.Int `abi:"_reserve0"`           // 地址较小的代币（token0）的储备量
+		Reserve1           *big.Int `abi:"_reserve1"`           // 地址较大的代币（token1）的储备量
 		BlockTimestampLast uint32   `abi:"_blockTimestampLast"` // 最后一次更新储备量的区块时间戳
 	}
-	fmt.Println("pairAddress", pairAddress)
 
 	// 调用合约方法
 	data, _ := b.parser.pairABI.Pack("getReserves")
@@ -675,40 +662,17 @@ func (b *SandwichBuilder) getPoolReserves(ctx context.Context, pairAddress *comm
 	if err := b.parser.pairABI.UnpackIntoInterface(&reserves, "getReserves", result); err != nil {
 		return nil, nil, err
 	}
-	fmt.Println("reservesreserves", reserves)
 
-	// 获取交易对代币地址
-	token0Addr, _ := b.getTokenAddress(ctx, pairAddress, "token0")
-	token1Addr, _ := b.getTokenAddress(ctx, pairAddress, "token1")
-	fmt.Println("to", token0Addr, token1Addr)
-
-	// 动态判断储备顺序
+	cmpRes := CompareAddress(tokenA, tokenB)
 	switch {
-	// 情况1: 输入是ETH（需要确保交易对包含WETH）
-	case inputIsETH:
-		if token0Addr == b.parser.wethAddress {
-			// WETH是token0: reserve0为ETH储备，reserve1为代币储备
-			return reserves.Reserve0, reserves.Reserve1, nil
-		} else if token1Addr == b.parser.wethAddress {
-			// WETH是token1: reserve1为ETH储备，reserve0为代币储备
-			return reserves.Reserve1, reserves.Reserve0, nil
-		} else {
-			return nil, nil, errors.New("ETH交易对不包含WETH")
-		}
-	// 情况2: 输入是代币（需要确保交易对包含WETH）
-	default:
-		if token0Addr == b.parser.wethAddress {
-			// 输入代币是token1: reserve1为代币储备，reserve0为ETH储备
-			return reserves.Reserve1, reserves.Reserve0, nil
-		} else if token1Addr == b.parser.wethAddress {
-			// 输入代币是token0: reserve0为代币储备，reserve1为ETH储备
-			return reserves.Reserve0, reserves.Reserve1, nil
-		} else {
-			// 处理代币-代币交易对（如DAI-USDC）
-			// 假设第一个代币是输入，第二个是输出
-			return reserves.Reserve0, reserves.Reserve1, nil
-		}
+	case cmpRes < 0:
+		// A小于B
+		return reserves.Reserve0, reserves.Reserve1, nil
+	case cmpRes > 0:
+		// A大于B
+		return reserves.Reserve1, reserves.Reserve0, nil
 	}
+	return reserves.Reserve1, reserves.Reserve0, nil
 }
 
 // 新增：获取代币地址

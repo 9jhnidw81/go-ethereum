@@ -53,6 +53,14 @@ func SortTokens(tokenA, tokenB common.Address) (common.Address, common.Address) 
 	return tokenB, tokenA
 }
 
+// CompareAddress 比较两个地址的大小
+// result < 0: a 小于 b
+// result > 0: a 大于 b
+// result = 0: a 等于 b
+func CompareAddress(a, b common.Address) int {
+	return bytes.Compare(a[:], b[:]) // 直接转成切片后用 bytes.Compare
+}
+
 // WeiToEth wei转换成eth
 func WeiToEth(wei *big.Int) string {
 	if wei == nil {
