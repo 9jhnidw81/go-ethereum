@@ -181,8 +181,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if needApprove && approveTx != nil {
 		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
 	}
-	return []*types.Transaction{frontTx, backTx}, nil
-	//return []*types.Transaction{frontTx, tx, backTx}, nil
+	//return []*types.Transaction{frontTx, backTx}, nil
+	return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
 // 构建买入交易（前跑）
@@ -242,8 +242,9 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, targetTx *types.T
 		)
 	} else {
 		// 代币兑换
+		fmt.Println("代币兑换", frontInAmount, effectiveInput)
 		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens,
-			frontInAmount,   // 花出去的 代币 A 的数量
+			frontInAmount,   // 花出去的 代币 A 的数量 TODO:这里好像不对，是否需要考虑eth-intoken?
 			minAmountOut,    // 愿意接受的 最少能换到多少代币 B，少于会失败
 			swapParams.Path, // 兑换代币的路径 [代币A, 代币B]
 			b.FromAddress,   // 接收代币的地址
@@ -374,7 +375,7 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, frontTx *types.Tra
 		To:       frontTx.To(),
 		GasPrice: gasPrice,
 		Data:     data,
-	}, err)
+	}, err) // 一定会err的，尤其是没有代币，会提示转不出去
 
 	// 处理gas估算错误
 	if estimatedGas > 0 {
