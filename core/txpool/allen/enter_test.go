@@ -2,12 +2,14 @@ package allen
 
 import (
 	"context"
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/client"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"testing"
+	"time"
 )
 
 func testInitAllen() *ethclient.Client {
@@ -30,10 +32,11 @@ func TestMockFight(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
+	startTime := time.Now()
+	fmt.Println("开始夹击，当前时间", startTime.Unix())
 	Fight(tx)
+	fmt.Println("夹击完成，共耗时", time.Now().Unix()-startTime.Unix(), "秒")
 }
-
-//每个参数都打印出来看看哪个有问题
 
 func TestSpeedNonce(t *testing.T) {
 	//ethCli := testInitAllen()

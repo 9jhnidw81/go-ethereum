@@ -66,15 +66,10 @@ func Fight(tx *types.Transaction) {
 		log.Printf("\r\n\r\n\r\n[Fight] 模拟失败，已回滚nonce状态")
 		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
+		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
 	} else {
 		log.Printf("\r\n\r\n\r\n[Fight] sendMevBundle success: %v", bundle)
-		//err := FbClient.SendBundle(context.Background(), bundle)
-		//if err != nil {
-		//	log.Printf("[Fight] sendBundle failed %v, bundle: %v", err, bundle)
-		//} else {
-		//	log.Printf("[Fight] sendBundle success: %v", bundle)
-		//}
 		go func() {
 			err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
 			log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)

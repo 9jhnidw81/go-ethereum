@@ -86,18 +86,21 @@ func (c *EthClient) GetSequentialNonce(ctx context.Context, address common.Addre
 
 // ForceSyncNonce 强制同步到链上最新状态
 func (c *EthClient) ForceSyncNonce(ctx context.Context, address common.Address) error {
+	const (
+		methodPrefix = "ForceSyncNonce"
+	)
 	c.nonceLock.Lock()
 	defer c.nonceLock.Unlock()
 
 	current, err := c.PendingNonceAt(ctx, address)
 	if err != nil {
-		return fmt.Errorf("强制同步失败: %v", err)
+		return fmt.Errorf("[%s]强制同步失败: %v", methodPrefix, err)
 	}
 
-	old := atomic.LoadUint64(&c.localNonce)
+	//old := atomic.LoadUint64(&c.localNonce)
 	atomic.StoreUint64(&c.localNonce, current)
 
-	log.Printf("[Nonce] 强制同步完成：%d -> %d", old, current)
+	//log.Printf("[Nonce] 强制同步完成：%d -> %d", old, current)
 	return nil
 }
 
@@ -105,6 +108,7 @@ func (c *EthClient) ForceSyncNonce(ctx context.Context, address common.Address) 
 // 需要判断第一条交易是否超过5个区块，超过认为已经失败，调用ForceSyncNonce()
 func (c *EthClient) MonitorSendingTx(ctx context.Context, txs []*types.Transaction) error {
 	const (
+		methodPrefix  = "MonitorSendingTx"
 		checkInterval = 12 * time.Second // 区块时间按12秒估算
 		maxAttempts   = 10               // 最大尝试次数（约6分钟）
 	)
@@ -116,7 +120,7 @@ func (c *EthClient) MonitorSendingTx(ctx context.Context, txs []*types.Transacti
 	firstTx := txs[0]
 	fromAddress, err := types.Sender(types.NewEIP155Signer(c.Config.ChainID), firstTx)
 	if err != nil {
-		return fmt.Errorf("解析发送地址失败: %w", err)
+		return fmt.Errorf("[%s] 解析发送地址失败: %w", methodPrefix, err)
 	}
 
 	var (
@@ -186,7 +190,7 @@ func (c *EthClient) MonitorSendingTx(ctx context.Context, txs []*types.Transacti
 		}
 	}
 
-	return fmt.Errorf("监控超时，已达最大尝试次数 %d", maxAttempts)
+	return fmt.Errorf("[%s] 监控超时，已达最大尝试次数 %d", methodPrefix, maxAttempts)
 }
 
 // SyncNonce 同步链上nonce的
