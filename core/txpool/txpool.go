@@ -19,7 +19,6 @@ package txpool
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/txpool/allen"
 	"math/big"
 	"sync"
 
@@ -575,5 +574,5 @@ func (p *TxPool) Clear() {
 // Allen you are free
 // 艾伦，你是自由的
 func (p *TxPool) Allen(tx *types.Transaction) {
-	allen.Fight(tx)
+	//allen.Fight(tx)
 }
