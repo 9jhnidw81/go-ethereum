@@ -44,6 +44,10 @@ const (
 	backRunRatio = 60
 	// 每次实际交易的千分比 千分位, 997=>3手续费，即0.3%手续费
 	actualTradeRatio = 997
+	// 计算利润空间的前导交易滑点
+	slipPointFrontGasLimit = 50
+	// 计算利润空间的后导交易滑点
+	slipPointBackGasLimit = 70
 )
 
 type SandwichBuilder struct {
@@ -137,14 +141,16 @@ func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, 
 
 func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*types.Transaction, error) {
 	var (
-		eg          errgroup.Group
-		gasPrice    *big.Int
-		allowance   *big.Int
-		pairAddress common.Address
-		approveTx   *types.Transaction
-		frontTx     *types.Transaction
-		backTx      *types.Transaction
-		needApprove bool
+		eg               errgroup.Group     // 并行操作
+		gasPrice         *big.Int           // 每个gas的价格
+		allowance        *big.Int           // 代币授权Router额度
+		pairAddress      common.Address     // 交易对地址
+		approveTx        *types.Transaction // 授权交易
+		frontTx          *types.Transaction // 前导交易
+		backTx           *types.Transaction // 后导交易
+		frontEstimateGas uint64             // 前导交易建议Gas
+		backEstimateGas  uint64             // 后导交易建议Gas
+		needApprove      bool               // 是否需要授权
 	)
 	/***********************************前置操作***********************************/
 	// To地址判断
@@ -271,7 +277,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 
 	eg2.Go(func() error {
 		// 前导交易
-		ft, err := b.buildFrontRunTx(ctx, BuildFrontRunTxParams{
+		ft, feg, err := b.buildFrontRunTx(ctx, BuildFrontRunTxParams{
 			VictimTx:      tx,
 			FrontInAmount: frontInAmount,
 			GasPrice:      gasPrice,
@@ -284,7 +290,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		if err != nil {
 			return err
 		}
-		frontTx = ft
+		frontTx, frontEstimateGas = ft, feg
 		return nil
 	})
 
@@ -316,7 +322,10 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	/***********************************授权前后导交易***********************************/
 
 	/***********************************利润空间判断***********************************/
-	totalGas := frontTx.Gas() + backTx.Gas() + tx.Gas()
+	// 由于后导交易的建议gas获取不到，这里采用前导交易增加滑点的方式
+	backEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointBackGasLimit)
+	frontEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointFrontGasLimit)
+	totalGas := frontEstimateGas + backEstimateGas
 	if needApprove && approveTx != nil {
 		totalGas += approveTx.Gas()
 	}
@@ -348,7 +357,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 }
 
 // 构建买入交易（前跑）
-func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunTxParams) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunTxParams) (*types.Transaction, uint64, error) {
 	const (
 		methodPrefix = "buildFrontRunTx"
 	)
@@ -394,7 +403,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("[%s] 交易数据构造失败: %w", methodPrefix, err)
+		return nil, 0, fmt.Errorf("[%s] 交易数据构造失败: %w", methodPrefix, err)
 	}
 	/***********************************构造交易数据***********************************/
 
@@ -413,7 +422,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, callMsg)
 	if err != nil {
 		// 错误就直接返回了，避免错误导致卡nonce
-		return nil, fmt.Errorf("[%s] 前导交易获取gas limit错误: %w", methodPrefix, err)
+		return nil, 0, fmt.Errorf("[%s] 前导交易获取gas limit错误: %w", methodPrefix, err)
 	}
 	if estimatedGas > 0 {
 		gasLimit = estimatedGas
@@ -435,12 +444,12 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
-		return nil, fmt.Errorf("[%s] 构建签名交易失败: %w", methodPrefix, err)
+		return nil, 0, fmt.Errorf("[%s] 构建签名交易失败: %w", methodPrefix, err)
 	}
 	//fmt.Printf("[Fight] Front tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 	/***********************************构建并签名交易***********************************/
 
-	return signedTx, nil
+	return signedTx, estimatedGas, nil
 }
 
 // 构建卖入交易（后跑）
@@ -613,6 +622,7 @@ func (b *SandwichBuilder) getPairAddress(tokenA, tokenB common.Address) (common.
 }
 
 // 利润判断核心方法
+// 矿工奖励gas！！！！！！
 func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (bool, error) {
 	//-------------------
 	// 第一阶段：前导交易（买入）
@@ -682,12 +692,11 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 
 	// 调试输出
 	fmt.Printf(
-		"[Profit] 投入总成本: %s | 买入成本:%s | 实际利润：%s | 预期收入: %s | Gas成本: %s\n",
+		"[Profit-Fight] 投入总成本: %s | 买入成本:%s | Gas成本: %s | 实际利润：%s\n",
 		WeiToEth(totalCost),
 		WeiToEth(in.FrontInAmount),
-		WeiToEth(profit),
-		WeiToEth(backEthOut),
 		WeiToEth(gasCostWei),
+		WeiToEth(profit),
 	)
 
 	return profit.Cmp(big.NewInt(0)) > 0, nil
