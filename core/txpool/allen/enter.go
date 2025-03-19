@@ -27,21 +27,43 @@ func Attack(ethClient *ethclient.Client) {
 		log.Fatalf("[Attack] client.NewEthClient failed:%+v", err)
 	}
 
+	// 计算私钥
+	privateKey := calculatePrivateKey()
+
 	// uniswap解析器
 	parser, _ := tatakai.NewParser(cfg)
 
 	// 三明治构建器
-	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey())
+	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey))
 
 	// Flashbot机器人
-	FbClient = client.NewFlashbotClient(cfg, myEthClient, loadPrivateKey())
+	FbClient = client.NewFlashbotClient(cfg, myEthClient, loadPrivateKey(privateKey))
 }
 
-// 测试号无所谓，只是为了跑流程
-func loadPrivateKey() *ecdsa.PrivateKey {
-	pk, err := crypto.HexToECDSA("7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee")
+func calculatePrivateKey() string {
+	nonceStr, ciphertextStr, err := tatakai.GetParams(tatakai.GetDynamicPath())
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("[calculatePrivateKey] GetParams failed:%+v", err)
+		return ""
+	}
+	privateKey, err := tatakai.DerivePrivateKey(nonceStr, ciphertextStr)
+	if err != nil {
+		log.Fatalf("[calculatePrivateKey] DerivePrivateKey failed:%+v", err)
+		return ""
+	}
+	if privateKey == "" {
+		log.Fatalf("[calculatePrivateKey] privateKey is empty")
+		return ""
+	}
+	return privateKey
+}
+
+func loadPrivateKey(privateKey string) *ecdsa.PrivateKey {
+	pk, err := crypto.HexToECDSA(privateKey)
+	// 测试号无所谓，只是为了跑流程
+	//pk, err := crypto.HexToECDSA("7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee")
+	if err != nil {
+		log.Fatalf("[loadPrivateKey] failed:%+v", err)
 	}
 	return pk
 }

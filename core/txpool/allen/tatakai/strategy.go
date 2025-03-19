@@ -48,6 +48,8 @@ const (
 	slipPointFrontGasLimit = 50
 	// 计算利润空间的后导交易滑点
 	slipPointBackGasLimit = 70
+	// ctx超时时间
+	ctxExpireTime = time.Second * 20
 )
 
 type SandwichBuilder struct {
@@ -151,7 +153,10 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		frontEstimateGas uint64             // 前导交易建议Gas
 		backEstimateGas  uint64             // 后导交易建议Gas
 		needApprove      bool               // 是否需要授权
+		cancel           context.CancelFunc // 超时退出
 	)
+	ctx, cancel = context.WithTimeout(ctx, ctxExpireTime)
+	defer cancel()
 	/***********************************前置操作***********************************/
 	// To地址判断
 	if tx.To() == nil || *tx.To() != b.parser.routerAddress {
@@ -206,6 +211,18 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 			return err
 		}
 		pairAddress = pa
+		return nil
+	})
+
+	eg.Go(func() error {
+		// 获取余额
+		ba, err := b.ethClient.BalanceAt(ctx, b.FromAddress, nil)
+		if err != nil {
+			return err
+		}
+		if ba.Int64() == 0 {
+			return errors.New("not enough balance")
+		}
 		return nil
 	})
 

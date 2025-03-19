@@ -47,7 +47,7 @@ func TestSpeedNonce(t *testing.T) {
 		panic(err)
 	}
 	myEthClient, err := client.NewEthClient(cfg, ethCli)
-	pk := loadPrivateKey()
+	pk := loadPrivateKey("")
 	for i := 19; i <= 19; i++ {
 		speedNonce, err := myEthClient.SpeedNonce(ctx, pk, crypto.PubkeyToAddress(pk.PublicKey), uint64(i), 200)
 		if err != nil {
