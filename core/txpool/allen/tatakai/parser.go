@@ -102,6 +102,7 @@ func (p *TransactionParser) IsBuyTransaction(params map[string]interface{}) (boo
 	if !ok || len(path) < 2 {
 		return false, common2.ErrInvalidPath
 	}
+	fmt.Println("IsBuyTransaction", path[0], "weth", p.wethAddress)
 
 	return path[0] == p.wethAddress, nil
 	//return path[0] == p.wethAddress || path[0] == p.inTokenAddress, nil

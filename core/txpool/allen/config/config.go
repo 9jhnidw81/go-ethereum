@@ -91,7 +91,7 @@ func Get(network Network) *Config {
 			RPCURL:            "wss://mainnet.infura.io/ws/v3/",
 			FlashbotsEndpoint: "https://relay.flashbots.net",
 			RouterAddress:     "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-			WETHAddress:       "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+			WETHAddress:       "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
 			FactoryAddress:    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
 			RouterAbi:         UniswapV2RouterAbi,
 			PairAbi:           UniswapPairAbi,
