@@ -269,8 +269,10 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	var (
 		eg2                   errgroup.Group
 		needSetApprovedStatus bool
+		approveNonce          uint64
 	)
 	if needSetApprovedStatus = allowance.Cmp(big.NewInt(0)) == 0 && !b.isTokenApproved(path[1]); needSetApprovedStatus {
+		approveNonce = frontNonce
 		frontNonce++ // TODO: 这里会有问题，假设授权没报错，但是三明治攻击失败，nonce已经递增了，此时会导致后面的nonce全部失败？
 		backNonce++  // TODO: 可能需要定期检查nonce有效性？或者监控三明治攻击失败的时候，用自转0eth的方式重新清洗nonce？
 	}
@@ -279,7 +281,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		if needSetApprovedStatus {
 			maxAmountIn := new(big.Int)
 			maxAmountIn.SetString(maxApproveAmount, 16)
-			at, err := b.approveTokens(ctx, path[1], maxAmountIn, gasPrice, frontNonce)
+			at, err := b.approveTokens(ctx, path[1], maxAmountIn, gasPrice, approveNonce)
 			if err != nil {
 				// 立即强制同步nonce
 				syncErr := b.ethClient.ForceSyncNonce(ctx, b.FromAddress)
