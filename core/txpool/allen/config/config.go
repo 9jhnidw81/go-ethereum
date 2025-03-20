@@ -49,11 +49,13 @@ type Config struct {
 	Erc20Abi          string
 	ChainID           *big.Int
 	GasConfig         GasConfig
+	DefaultGas        uint64
+	Builders          []string
 }
 
 type GasConfig struct {
-	MaxGasGwei     int64
-	BaseMultiplier float64
+	MaxGasGwei     int64   // 最大Gas价格
+	BaseMultiplier float64 // Gas价格基本乘数
 	Slippage       float64
 }
 
@@ -79,6 +81,10 @@ func Get(network Network) *Config {
 				BaseMultiplier: 5, // gas价格倍数
 				Slippage:       0.05,
 			},
+			DefaultGas: 200000,
+			Builders: []string{
+				"https://relay-sepolia.flashbots.net", "https://builder-testnet.bloxroute.com",
+			},
 		}
 	case Mainnet:
 		return &Config{
@@ -93,9 +99,16 @@ func Get(network Network) *Config {
 			FactoryAbi:        FactoryAbi,
 			ChainID:           big.NewInt(1),
 			GasConfig: GasConfig{
-				MaxGasGwei:     50,   // 主网 Gas 高峰时可能需调高（参考：https://etherscan.io/gastracker）
-				BaseMultiplier: 1.15, // 基础 Gas 乘数（建议 1.1-1.3）
-				Slippage:       0.03, // 推荐滑点 3%（高波动代币需增加）
+				MaxGasGwei:     200,  // 主网 Gas 高峰时可能需调高（参考：https://etherscan.io/gastracker）
+				BaseMultiplier: 5,    // 基础 Gas 乘数（建议 1.1-1.3）
+				Slippage:       0.05, // 推荐滑点 3%（高波动代币需增加）
+			},
+			DefaultGas: 400000,
+			Builders: []string{
+				"https://relay.flashbots.net",  // Flashbots主网中继
+				"https://builder0x69.io",       // 主流builder
+				"https://rsync-builder.xyz",    // 常用builder
+				"https://rpc.titanbuilder.xyz", // 高性能builder
 			},
 		}
 	default:

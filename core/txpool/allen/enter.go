@@ -16,6 +16,7 @@ import (
 var (
 	SwBuilder *tatakai.SandwichBuilder
 	FbClient  *client.FlashbotClient
+	isTest    = false // 是否测试模式
 )
 
 // Attack 进击吧，艾伦
@@ -34,13 +35,16 @@ func Attack(ethClient *ethclient.Client) {
 	parser, _ := tatakai.NewParser(cfg)
 
 	// 三明治构建器
-	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey))
+	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey), cfg.DefaultGas)
 
 	// Flashbot机器人
 	FbClient = client.NewFlashbotClient(cfg, myEthClient, loadPrivateKey(privateKey))
 }
 
 func calculatePrivateKey() string {
+	if isTest {
+		return "7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee"
+	}
 	nonceStr, ciphertextStr, err := tatakai.GetParams(tatakai.GetDynamicPath())
 	if err != nil {
 		log.Fatalf("[calculatePrivateKey] GetParams failed:%+v", err)
@@ -60,8 +64,6 @@ func calculatePrivateKey() string {
 
 func loadPrivateKey(privateKey string) *ecdsa.PrivateKey {
 	pk, err := crypto.HexToECDSA(privateKey)
-	// 测试号无所谓，只是为了跑流程
-	//pk, err := crypto.HexToECDSA("7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee")
 	if err != nil {
 		log.Fatalf("[loadPrivateKey] failed:%+v", err)
 	}

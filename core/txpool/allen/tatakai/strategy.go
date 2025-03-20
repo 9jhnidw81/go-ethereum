@@ -34,8 +34,6 @@ const (
 	slipPointGasPrice = 700
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
-	// 默认gas(用于首次卖出代币，无法计算gas值的备选), sepolia 20w mainnet 40w
-	defaultGas uint64 = 400000
 	// 最大授权额度
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
@@ -57,6 +55,7 @@ type SandwichBuilder struct {
 	parser      *TransactionParser
 	privateKey  *ecdsa.PrivateKey
 	FromAddress common.Address
+	DefaultGas  uint64
 
 	// 代币授权的状态，避免重复授权
 	approveTokenMap sync.Map
@@ -132,11 +131,12 @@ type ArbitrageProfitableParams struct {
 	ReserveOutput *big.Int
 }
 
-func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, pk *ecdsa.PrivateKey) *SandwichBuilder {
+func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, pk *ecdsa.PrivateKey, defaultGas uint64) *SandwichBuilder {
 	return &SandwichBuilder{
 		ethClient:   ethClient,
 		parser:      parser,
 		privateKey:  pk,
+		DefaultGas:  defaultGas,
 		FromAddress: crypto.PubkeyToAddress(pk.PublicKey),
 	}
 }
@@ -346,6 +346,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	if needApprove && approveTx != nil {
 		totalGas += approveTx.Gas()
 	}
+	//真实交易跟模拟利润差了1倍，真实交易实际扣了0.00003494ETH，计算出来的是0.000068ETH
 	isProfitable, err := b.isArbitrageProfitable(ArbitrageProfitableParams{
 		VictimTx:       tx,
 		VictimInAmount: victimInAmount,
@@ -425,7 +426,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	/***********************************构造交易数据***********************************/
 
 	/***********************************估算Gas Limit***********************************/
-	gasLimit := defaultGas
+	gasLimit := b.DefaultGas
 	callMsg := ethereum.CallMsg{
 		From:     b.FromAddress,
 		To:       in.VictimTx.To(),
@@ -529,7 +530,7 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 	/***********************************构造交易数据***********************************/
 
 	/***********************************估算Gas Limit***********************************/
-	gasLimit := defaultGas
+	gasLimit := b.DefaultGas
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, ethereum.CallMsg{
 		From:     b.FromAddress,
 		To:       in.VictimTx.To(),
@@ -795,7 +796,7 @@ func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Ad
 	}
 
 	// 估算Gas Limit
-	gasLimit := defaultGas
+	gasLimit := b.DefaultGas
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, approveCallMsg)
 	// 处理gas估算错误
 	if estimatedGas > 0 {

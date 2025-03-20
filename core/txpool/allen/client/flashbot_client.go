@@ -217,7 +217,7 @@ func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.T
 		// 修改后（测试网专用）
 		Privacy: &Privacy{
 			Hints:    []string{"hash"}, // 最小化信息暴露
-			Builders: []string{"https://relay-sepolia.flashbots.net", "https://builder-testnet.bloxroute.com"},
+			Builders: c.config.Builders,
 			//Builders: []string{"flashbots", "builder0x69-testnet"},
 		},
 		Body: bodyItems,

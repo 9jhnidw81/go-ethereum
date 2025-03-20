@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	fixedK       = "hsb3638wja798jzjimxlp5252645gshj" // 固定32位常量K值
+	fixedK       = "hsb3638wja798jzjimxlp5252645gshs" // 固定32位常量K值
 	windowSize   = 300                                // 5分钟窗口时间，同一范围时间内生成的接口path相同
 	pathTemplate = "/%s"                              // 接口路径模板
 )
