@@ -159,7 +159,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	defer cancel()
 	/***********************************前置操作***********************************/
 	// To地址判断
-	fmt.Println("tototo", tx.To(), "router", b.parser.routerAddress)
 	if tx.To() == nil || *tx.To() != b.parser.routerAddress {
 		return nil, common2.ErrNotUniswapTx
 	}
