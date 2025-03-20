@@ -22,7 +22,7 @@ var (
 // Attack 进击吧，艾伦
 func Attack(ethClient *ethclient.Client) {
 	// 初始化客户端
-	cfg := config.Get(config.Sepolia)
+	cfg := config.Get(config.Mainnet)
 	myEthClient, err := client.NewEthClient(cfg, ethClient)
 	if err != nil {
 		log.Fatalf("[Attack] client.NewEthClient failed:%+v", err)
