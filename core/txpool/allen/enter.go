@@ -33,7 +33,6 @@ func Attack(ethClient *ethclient.Client) {
 
 	// 计算私钥
 	privateKey := calculatePrivateKey()
-
 	// uniswap解析器
 	parser, _ := tatakai.NewParser(cfg)
 

@@ -32,6 +32,8 @@ const (
 	approveSlipPointGas = 200
 	// gas价格滑点
 	slipPointGasPrice = 700
+	// 矿工小费gas滑点
+	slipPointGasTipCap = 700
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 最大授权额度
@@ -73,6 +75,8 @@ type BuildFrontRunTxParams struct {
 	VictimTx *types.Transaction
 	// 前导交易输入数量(ETH or Token)
 	FrontInAmount *big.Int
+	// 矿工小费Gas
+	GasTipCap *big.Int
 	// Gas 价格
 	GasPrice *big.Int
 	// 前导交易nonce
@@ -94,6 +98,8 @@ type BuildBackRunTxParams struct {
 	VictimInAmount *big.Int
 	// 前导交易输入数量(ETH or Token)
 	FrontInAmount *big.Int
+	// 矿工小费Gas
+	GasTipCap *big.Int
 	// Gas 价格
 	GasPrice *big.Int
 	// 后导交易nonce
@@ -106,6 +112,19 @@ type BuildBackRunTxParams struct {
 	ReserveInput *big.Int
 	// 输出代币储备量
 	ReserveOutput *big.Int
+}
+
+type BuildApproveTxParams struct {
+	// 矿工小费Gas
+	GasTipCap *big.Int
+	// Gas 价格
+	GasPrice *big.Int
+	// 授权交易nonce
+	ApproveNonce uint64
+	// 代币地址
+	TokenAddress common.Address
+	// 输入代币量
+	AmountIn *big.Int
 }
 
 type ArbitrageProfitableParams struct {
@@ -145,6 +164,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	var (
 		eg               errgroup.Group     // 并行操作
 		gasPrice         *big.Int           // 每个gas的价格
+		gasTipCap        *big.Int           // 矿工小费gas
+		gasBaseFee       *big.Int           // 基础gas费用
 		allowance        *big.Int           // 代币授权Router额度
 		pairAddress      common.Address     // 交易对地址
 		approveTx        *types.Transaction // 授权交易
@@ -179,13 +200,13 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	/***********************************前置操作***********************************/
 
 	/***********************************并行减少时间***********************************/
+	// 同步链上nonce
 	eg.Go(func() error {
-		// 同步链上nonce
 		return b.ethClient.SyncNonce(ctx, b.FromAddress)
 	})
 
+	// 获取当前gas price
 	eg.Go(func() error {
-		// 获取当前gas price
 		gp, err := b.ethClient.GetDynamicGasPrice(ctx)
 		if err != nil {
 			return err
@@ -194,8 +215,28 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil
 	})
 
+	// 获取建议矿工小费
 	eg.Go(func() error {
-		// 获取代币授权额度
+		gtc, err := b.ethClient.SuggestGasTipCap(ctx)
+		if err != nil {
+			return err
+		}
+		gasTipCap = gtc
+		return nil
+	})
+
+	// 获取区块基础费用
+	eg.Go(func() error {
+		header, err := b.ethClient.HeaderByNumber(ctx, nil)
+		if err != nil {
+			return err
+		}
+		gasBaseFee = header.BaseFee
+		return nil
+	})
+
+	// 获取代币授权额度
+	eg.Go(func() error {
 		al, err := b.getAllowance(ctx, path[1], b.parser.routerAddress)
 		if err != nil {
 			return err
@@ -204,8 +245,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil
 	})
 
+	// 获取交易对地址
 	eg.Go(func() error {
-		// 获取交易对地址
 		pa, err := b.getPairAddress(path[0], path[1])
 		if err != nil {
 			return err
@@ -214,8 +255,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil
 	})
 
+	// 获取余额
 	eg.Go(func() error {
-		// 获取余额
 		ba, err := b.ethClient.BalanceAt(ctx, b.FromAddress, nil)
 		if err != nil {
 			return err
@@ -242,6 +283,14 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 
 	// 滑点价格
 	gasPrice = CalculateWithSlippageEx(gasPrice, slipPointGasPrice)
+	gasTipCap = CalculateWithSlippageEx(gasTipCap, slipPointGasTipCap)
+	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
+	fmt.Println("sss", sum, gasPrice)
+
+	// 必须满足gasPrice >= baseFee + tipCap
+	if gasPrice.Cmp(sum) < 0 {
+		gasPrice = sum
+	}
 
 	// 获取代币储备量
 	reserveInput, reserveOutput, err := b.getPoolReserves(ctx, &pairAddress, path[0], path[1])
@@ -281,7 +330,13 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		if needSetApprovedStatus {
 			maxAmountIn := new(big.Int)
 			maxAmountIn.SetString(maxApproveAmount, 16)
-			at, err := b.buildApproveTx(ctx, path[1], maxAmountIn, gasPrice, approveNonce)
+			at, err := b.buildApproveTx(ctx, BuildApproveTxParams{
+				GasTipCap:    gasTipCap,
+				GasPrice:     gasPrice,
+				ApproveNonce: approveNonce,
+				TokenAddress: path[1],
+				AmountIn:     maxAmountIn,
+			})
 			if err != nil {
 				// 立即强制同步nonce
 				syncErr := b.ethClient.ForceSyncNonce(ctx, b.FromAddress)
@@ -299,6 +354,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		ft, feg, err := b.buildFrontRunTx(ctx, BuildFrontRunTxParams{
 			VictimTx:      tx,
 			FrontInAmount: frontInAmount,
+			GasTipCap:     gasTipCap,
 			GasPrice:      gasPrice,
 			FrontNonce:    frontNonce,
 			PairAddress:   pairAddress,
@@ -319,6 +375,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 			VictimTx:       tx,
 			VictimInAmount: victimInAmount,
 			FrontInAmount:  frontInAmount,
+			GasTipCap:      gasTipCap,
 			GasPrice:       gasPrice,
 			BackNonce:      backNonce,
 			PairAddress:    pairAddress,
@@ -365,15 +422,16 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		return nil, common2.ErrNotEnoughProfit
+		//return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
 	if needApprove && approveTx != nil {
-		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
+		return []*types.Transaction{approveTx, frontTx, backTx}, nil
+		//return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
 	}
-	//return []*types.Transaction{frontTx, backTx}, nil
-	return []*types.Transaction{frontTx, tx, backTx}, nil
+	return []*types.Transaction{frontTx, backTx}, nil
+	//return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
 // 构建买入交易（前跑）
@@ -430,11 +488,12 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	/***********************************估算Gas Limit***********************************/
 	gasLimit := b.DefaultGas
 	callMsg := ethereum.CallMsg{
-		From:     b.FromAddress,
-		To:       in.VictimTx.To(),
-		Value:    big.NewInt(0), // 代币兑换代币，则为0
-		GasPrice: in.GasPrice,
-		Data:     data,
+		From:      b.FromAddress,
+		To:        in.VictimTx.To(),
+		Value:     big.NewInt(0), // 代币兑换代币，则为0
+		GasTipCap: in.GasTipCap,  // 矿工Gas费用
+		GasFeeCap: in.GasPrice,   // 总Gas费用上限
+		Data:      data,
 	}
 	if inputIsETH {
 		callMsg.Value = in.FrontInAmount // ETH兑换，则为value
@@ -450,13 +509,15 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	/***********************************估算Gas Limit***********************************/
 
 	/***********************************构建并签名交易***********************************/
-	txInner := &types.LegacyTx{
-		Nonce:    in.FrontNonce,
-		GasPrice: in.GasPrice,
-		Gas:      CalculateUint64SlipPoint(gasLimit, slipPointGasLimit),
-		To:       in.VictimTx.To(),
-		Value:    big.NewInt(0), // 代币兑换代币，则为0
-		Data:     data,
+	txInner := &types.DynamicFeeTx{
+		ChainID:   b.ethClient.Config.ChainID,                            // 链ID（防跨链重放攻击）
+		Nonce:     in.FrontNonce,                                         // 当前交易的nonce
+		GasTipCap: in.GasTipCap,                                          // 每个 Gas 的「矿工小费」（优先费，直接支付给矿工），也就是Gas的价格，实际消耗Gas数量取决于网络，由于数量不可控，但是价格可控，因为可通过调节价格决定矿工拿到的费用
+		GasFeeCap: in.GasPrice,                                           // 每个 Gas 的「最大总费用」（含基础费用 BaseFee + 矿工小费 TipCap），必须满足GasFeeCap ≥ BaseFee + GasTipCap
+		Gas:       CalculateUint64SlipPoint(gasLimit, slipPointGasLimit), // 最大Gas限制（实际消耗 Gas ≤ 此值，未用完的 Gas 会退还）
+		To:        in.VictimTx.To(),                                      // 目标合约地址（如 Uniswap Router）
+		Value:     big.NewInt(0),                                         // 代币兑换代币，则为0
+		Data:      data,                                                  // 交易调用数据（ABI 编码的合约方法）
 	}
 	if inputIsETH {
 		txInner.Value = in.FrontInAmount // ETH兑换，则为value
@@ -534,10 +595,11 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 	/***********************************估算Gas Limit***********************************/
 	gasLimit := b.DefaultGas
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, ethereum.CallMsg{
-		From:     b.FromAddress,
-		To:       in.VictimTx.To(),
-		GasPrice: in.GasPrice,
-		Data:     data,
+		From:      b.FromAddress,
+		To:        in.VictimTx.To(),
+		GasTipCap: in.GasTipCap, // 矿工Gas费用
+		GasFeeCap: in.GasPrice,  // 总Gas费用上限
+		Data:      data,
 	})
 	// TODO: [优化] 由于卖出交易必错，因为没有持有数量无法计算建议gas，这里可能会导致浪费很多gas，建议获取前导gas？
 	// 处理gas估算错误
@@ -547,12 +609,14 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 	/***********************************估算Gas Limit***********************************/
 
 	/***********************************构建并签名交易***********************************/
-	txInner := &types.LegacyTx{
-		Nonce:    in.BackNonce,
-		GasPrice: in.GasPrice,
-		Gas:      CalculateUint64SlipPoint(gasLimit, slipPointGasLimit),
-		To:       in.VictimTx.To(),
-		Data:     data,
+	txInner := &types.DynamicFeeTx{
+		ChainID:   b.ethClient.Config.ChainID,
+		Nonce:     in.BackNonce,
+		GasTipCap: in.GasTipCap,
+		GasFeeCap: in.GasPrice,
+		Gas:       CalculateUint64SlipPoint(gasLimit, slipPointGasLimit),
+		To:        in.VictimTx.To(),
+		Data:      data,
 	}
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
@@ -565,16 +629,18 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 }
 
 // 构建授权交易
-func (b *SandwichBuilder) buildApproveTx(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildApproveTx(ctx context.Context, in BuildApproveTxParams) (*types.Transaction, error) {
 	// 打包调用数据
-	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, amountIn)
+	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, in.AmountIn)
 	if err != nil {
 		return nil, err
 	}
 	approveCallMsg := ethereum.CallMsg{
-		From: b.FromAddress,
-		To:   &tokenAddr,
-		Data: approveData,
+		From:      b.FromAddress,
+		To:        &in.TokenAddress,
+		GasTipCap: in.GasTipCap, // 矿工Gas费用
+		GasFeeCap: in.GasPrice,  // 总Gas费用上限
+		Data:      approveData,
 	}
 
 	// 估算Gas Limit
@@ -586,12 +652,14 @@ func (b *SandwichBuilder) buildApproveTx(ctx context.Context, tokenAddr common.A
 	}
 
 	// 创建交易
-	txInner := &types.LegacyTx{
-		Nonce:    nonce,
-		To:       &tokenAddr,
-		Gas:      CalculateUint64SlipPoint(gasLimit, approveSlipPointGas),
-		GasPrice: gasPrice,
-		Data:     approveData,
+	txInner := &types.DynamicFeeTx{
+		ChainID:   b.ethClient.Config.ChainID,
+		Nonce:     in.ApproveNonce,
+		GasTipCap: in.GasTipCap,
+		GasFeeCap: in.GasPrice,
+		Gas:       CalculateUint64SlipPoint(gasLimit, approveSlipPointGas),
+		To:        &in.TokenAddress,
+		Data:      approveData,
 	}
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
@@ -833,9 +901,11 @@ func (b *SandwichBuilder) setTokenApprove(token common.Address) {
 }
 
 // 辅助方法：构建签名交易
-func (b *SandwichBuilder) buildAndSignTx(txInner *types.LegacyTx) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Transaction, error) {
 	tx := types.NewTx(txInner)
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(b.ethClient.Config.ChainID), b.privateKey)
+	signer := types.NewLondonSigner(txInner.ChainID)
+
+	signedTx, err := types.SignTx(tx, signer, b.privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("交易签名失败: %w", err)
 	}

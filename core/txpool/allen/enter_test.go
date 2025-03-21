@@ -13,7 +13,9 @@ import (
 )
 
 func testInitAllen() *ethclient.Client {
-	ethCli, err := ethclient.Dial("wss://sepolia.infura.io/ws/v3/7d5a6189348c438ab586891e09415578")
+	//ethCli, err := ethclient.Dial("wss://sepolia.infura.io/ws/v3/7d5a6189348c438ab586891e09415578")
+	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
+	ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
 	if err != nil {
 		panic(err)
 	}
@@ -25,9 +27,9 @@ func TestMockFight(t *testing.T) {
 	ethCli := testInitAllen()
 	ctx := context.Background()
 	// eth-link
-	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x6e2865505a20de3caea9845d92ab48024794b1197f3a936e814ced374d7b2dd1"))
+	tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x6e2865505a20de3caea9845d92ab48024794b1197f3a936e814ced374d7b2dd1"))
 	// eth-rgi，用来测试授权
-	tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0xe2af59cf8a33fc7697c4420055ae62bb66750819ca6e5a027d867c3eacfb69dd"))
+	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0xe2af59cf8a33fc7697c4420055ae62bb66750819ca6e5a027d867c3eacfb69dd"))
 	// yu-btc
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x838e57cbe839b44be98131b5e7df3d86cd93ff19900b5bb6f0a8d81278cd2cbd"))
 	if err != nil {
