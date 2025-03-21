@@ -281,7 +281,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		if needSetApprovedStatus {
 			maxAmountIn := new(big.Int)
 			maxAmountIn.SetString(maxApproveAmount, 16)
-			at, err := b.approveTokens(ctx, path[1], maxAmountIn, gasPrice, approveNonce)
+			at, err := b.buildApproveTx(ctx, path[1], maxAmountIn, gasPrice, approveNonce)
 			if err != nil {
 				// 立即强制同步nonce
 				syncErr := b.ethClient.ForceSyncNonce(ctx, b.FromAddress)
@@ -564,6 +564,43 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 	return signedTx, nil
 }
 
+// 构建授权交易
+func (b *SandwichBuilder) buildApproveTx(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) (*types.Transaction, error) {
+	// 打包调用数据
+	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, amountIn)
+	if err != nil {
+		return nil, err
+	}
+	approveCallMsg := ethereum.CallMsg{
+		From: b.FromAddress,
+		To:   &tokenAddr,
+		Data: approveData,
+	}
+
+	// 估算Gas Limit
+	gasLimit := b.DefaultGas
+	estimatedGas, err := b.ethClient.EstimateGas(ctx, approveCallMsg)
+	// 处理gas估算错误
+	if estimatedGas > 0 {
+		gasLimit = estimatedGas
+	}
+
+	// 创建交易
+	txInner := &types.LegacyTx{
+		Nonce:    nonce,
+		To:       &tokenAddr,
+		Gas:      CalculateUint64SlipPoint(gasLimit, approveSlipPointGas),
+		GasPrice: gasPrice,
+		Data:     approveData,
+	}
+	signedTx, err := b.buildAndSignTx(txInner)
+	if err != nil {
+		return nil, err
+	}
+
+	return signedTx, nil
+}
+
 // 辅助方法：解析兑换参数
 func (b *SandwichBuilder) parseSwapParams(method *abi.Method, params map[string]interface{}) (*SwapParams, error) {
 	swapParams := &SwapParams{
@@ -782,43 +819,6 @@ func (b *SandwichBuilder) getAllowance(ctx context.Context, tokenAddr, spender c
 	}
 
 	return allowance, nil
-}
-
-// 授权
-func (b *SandwichBuilder) approveTokens(ctx context.Context, tokenAddr common.Address, amountIn, gasPrice *big.Int, nonce uint64) (*types.Transaction, error) {
-	// 打包调用数据
-	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, amountIn)
-	if err != nil {
-		return nil, err
-	}
-	approveCallMsg := ethereum.CallMsg{
-		From: b.FromAddress,
-		To:   &tokenAddr,
-		Data: approveData,
-	}
-
-	// 估算Gas Limit
-	gasLimit := b.DefaultGas
-	estimatedGas, err := b.ethClient.EstimateGas(ctx, approveCallMsg)
-	// 处理gas估算错误
-	if estimatedGas > 0 {
-		gasLimit = estimatedGas
-	}
-
-	// 创建交易
-	txInner := &types.LegacyTx{
-		Nonce:    nonce,
-		To:       &tokenAddr,
-		Gas:      CalculateUint64SlipPoint(gasLimit, approveSlipPointGas),
-		GasPrice: gasPrice,
-		Data:     approveData,
-	}
-	signedTx, err := b.buildAndSignTx(txInner)
-	if err != nil {
-		return nil, err
-	}
-
-	return signedTx, nil
 }
 
 // 辅助方法：判断代币是否授权, 读取本地状态

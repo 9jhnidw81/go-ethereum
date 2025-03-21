@@ -16,13 +16,16 @@ import (
 var (
 	SwBuilder *tatakai.SandwichBuilder
 	FbClient  *client.FlashbotClient
-	isTest    = false // 是否测试模式
+	isTest    = true // 是否测试模式
 )
 
 // Attack 进击吧，艾伦
 func Attack(ethClient *ethclient.Client) {
 	// 初始化客户端
 	cfg := config.Get(config.Mainnet)
+	if isTest {
+		cfg = config.Get(config.Sepolia)
+	}
 	myEthClient, err := client.NewEthClient(cfg, ethClient)
 	if err != nil {
 		log.Fatalf("[Attack] client.NewEthClient failed:%+v", err)
