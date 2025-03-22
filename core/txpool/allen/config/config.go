@@ -37,7 +37,7 @@ const (
 
 type Config struct {
 	RPCURL            string
-	FlashbotsEndpoint string
+	FlashbotsEndpoint []string
 	RouterAddress     string
 	WETHAddress       string
 	InTokenAddress    string // 作为买代币的砝码
@@ -64,18 +64,20 @@ func Get(network Network) *Config {
 	case Sepolia:
 		// 测试网只会跑最新的uniswap，用不到v2
 		return &Config{
-			RPCURL:            "wss://sepolia.infura.io/ws/v3/",
-			FlashbotsEndpoint: "https://relay-sepolia.flashbots.net",
-			RouterAddress:     "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3", // v2
-			WETHAddress:       "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", // weth
-			InTokenAddress:    "0xcB856bC5Aa2664E47c9caDce6fF65117c5201a1C", // yu代币
-			FactoryAddress:    "0xF62c03E08ada871A0bEb309762E260a7a6a880E6", // uniswap v2通用工厂地址
-			FactoryAddress2:   "0x7E0987E5b3a30e3f2828572Bb659A548460a3003", // yu代币工厂地址
-			RouterAbi:         UniswapV2RouterAbi,
-			PairAbi:           UniswapPairAbi,
-			Erc20Abi:          Erc20Abi,
-			FactoryAbi:        FactoryAbi,
-			ChainID:           big.NewInt(11155111),
+			RPCURL: "wss://sepolia.infura.io/ws/v3/",
+			FlashbotsEndpoint: []string{
+				"https://relay-sepolia.flashbots.net",
+			},
+			RouterAddress:   "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3", // v2
+			WETHAddress:     "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", // weth
+			InTokenAddress:  "0xcB856bC5Aa2664E47c9caDce6fF65117c5201a1C", // yu代币
+			FactoryAddress:  "0xF62c03E08ada871A0bEb309762E260a7a6a880E6", // uniswap v2通用工厂地址
+			FactoryAddress2: "0x7E0987E5b3a30e3f2828572Bb659A548460a3003", // yu代币工厂地址
+			RouterAbi:       UniswapV2RouterAbi,
+			PairAbi:         UniswapPairAbi,
+			Erc20Abi:        Erc20Abi,
+			FactoryAbi:      FactoryAbi,
+			ChainID:         big.NewInt(11155111),
 			GasConfig: GasConfig{
 				MaxGasGwei:     150,
 				BaseMultiplier: 5, // gas价格倍数
@@ -109,16 +111,18 @@ func Get(network Network) *Config {
 		}
 	case Mainnet:
 		return &Config{
-			RPCURL:            "wss://mainnet.infura.io/ws/v3/",
-			FlashbotsEndpoint: "https://relay.flashbots.net",
-			RouterAddress:     "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-			WETHAddress:       "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-			FactoryAddress:    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-			RouterAbi:         UniswapV2RouterAbi,
-			PairAbi:           UniswapPairAbi,
-			Erc20Abi:          Erc20Abi,
-			FactoryAbi:        FactoryAbi,
-			ChainID:           big.NewInt(1),
+			RPCURL: "wss://mainnet.infura.io/ws/v3/",
+			FlashbotsEndpoint: []string{
+				"https://relay.flashbots.net",
+			},
+			RouterAddress:  "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+			WETHAddress:    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+			FactoryAddress: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+			RouterAbi:      UniswapV2RouterAbi,
+			PairAbi:        UniswapPairAbi,
+			Erc20Abi:       Erc20Abi,
+			FactoryAbi:     FactoryAbi,
+			ChainID:        big.NewInt(1),
 			GasConfig: GasConfig{
 				MaxGasGwei:     200,  // 主网 Gas 高峰时可能需调高（参考：https://etherscan.io/gastracker）
 				BaseMultiplier: 5,    // 基础 Gas 乘数（建议 1.1-1.3）

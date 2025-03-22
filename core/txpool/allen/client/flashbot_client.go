@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"golang.org/x/sync/errgroup"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -97,7 +98,7 @@ type Privacy struct {
 
 func NewFlashbotClient(cfg *config.Config, ethClient *EthClient, pk *ecdsa.PrivateKey) *FlashbotClient {
 	return &FlashbotClient{
-		rpc:        flashbotsrpc.New(cfg.FlashbotsEndpoint),
+		rpc:        flashbotsrpc.New(cfg.FlashbotsEndpoint[0]), // 这里主要是mock交易，只需要一条节点即可
 		EthClient:  ethClient,
 		config:     cfg,
 		privateKey: pk,
@@ -105,6 +106,9 @@ func NewFlashbotClient(cfg *config.Config, ethClient *EthClient, pk *ecdsa.Priva
 }
 
 func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transaction) error {
+	const (
+		methodPrefix = "MevSendBundle"
+	)
 	bundleParam, err := c.buildMevBundleParam(ctx, txs)
 	if err != nil {
 		return err
@@ -120,22 +124,44 @@ func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transac
 		Params:  []MevSendBundleParam{*bundleParam},
 	}
 	payload, _ := json.Marshal(param)
-	req, _ := http.NewRequest("POST", c.config.FlashbotsEndpoint, bytes.NewBuffer(payload))
-	headerReady, _ := crypto.Sign(
-		accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
-		c.privateKey,
+
+	var (
+		eg errgroup.Group
 	)
-	req.Header.Add("content-type", j)
-	req.Header.Add("Accept", j)
-	req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
-	resp, _ := mevHTTPClient.Do(req)
-	res, _ := ioutil.ReadAll(resp.Body)
-	fmt.Println("Mev_sendBundle")
-	fmt.Println(string(res))
+
+	endPoints := c.config.FlashbotsEndpoint
+	for i := 0; i < len(endPoints); i++ {
+		eg.Go(func() error {
+			req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
+			headerReady, _ := crypto.Sign(
+				accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
+				c.privateKey,
+			)
+			req.Header.Add("content-type", j)
+			req.Header.Add("Accept", j)
+			req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
+			resp, err := mevHTTPClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
+			}
+			res, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
+			}
+			fmt.Println("Mev_sendBundle")
+			fmt.Println(string(res))
+			return nil
+		})
+	}
+
 	return nil
 }
 
 func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transaction) error {
+	const (
+		methodPrefix = "EthSendBundle"
+	)
+
 	bundleParam, err := c.buildEthBundleParam(ctx, txs)
 	if err != nil {
 		return err
@@ -151,19 +177,40 @@ func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transac
 		Params:  []EthSendBundleParam{*bundleParam},
 	}
 	payload, _ := json.Marshal(param)
-	fmt.Println("payload", string(payload))
-	req, _ := http.NewRequest("POST", c.config.FlashbotsEndpoint, bytes.NewBuffer(payload))
-	headerReady, _ := crypto.Sign(
-		accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
-		c.privateKey,
+
+	var (
+		eg errgroup.Group
 	)
-	req.Header.Add("content-type", j)
-	req.Header.Add("Accept", j)
-	req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
-	resp, _ := mevHTTPClient.Do(req)
-	res, _ := ioutil.ReadAll(resp.Body)
-	fmt.Println("Eth_sendBundle")
-	fmt.Println(string(res))
+
+	endPoints := c.config.FlashbotsEndpoint
+	for i := 0; i < len(endPoints); i++ {
+		eg.Go(func() error {
+			req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
+			headerReady, _ := crypto.Sign(
+				accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
+				c.privateKey,
+			)
+			req.Header.Add("content-type", j)
+			req.Header.Add("Accept", j)
+			req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
+			resp, err := mevHTTPClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
+			}
+			res, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
+			}
+			fmt.Println("Eth_sendBundle")
+			fmt.Println(string(res))
+			return nil
+		})
+	}
+
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
