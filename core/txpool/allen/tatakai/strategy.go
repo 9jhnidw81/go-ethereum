@@ -285,7 +285,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	gasPrice = CalculateWithSlippageEx(gasPrice, slipPointGasPrice)
 	gasTipCap = CalculateWithSlippageEx(gasTipCap, slipPointGasTipCap)
 	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
-	fmt.Println("sss", sum, gasPrice)
 
 	// 必须满足gasPrice >= baseFee + tipCap
 	if gasPrice.Cmp(sum) < 0 {
@@ -422,16 +421,16 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		//return nil, common2.ErrNotEnoughProfit
+		return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
 	if needApprove && approveTx != nil {
-		return []*types.Transaction{approveTx, frontTx, backTx}, nil
-		//return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
+		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
+		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
 	}
-	return []*types.Transaction{frontTx, backTx}, nil
-	//return []*types.Transaction{frontTx, tx, backTx}, nil
+	//return []*types.Transaction{frontTx, backTx}, nil
+	return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
 // 构建买入交易（前跑）
@@ -903,9 +902,7 @@ func (b *SandwichBuilder) setTokenApprove(token common.Address) {
 // 辅助方法：构建签名交易
 func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Transaction, error) {
 	tx := types.NewTx(txInner)
-	signer := types.NewLondonSigner(txInner.ChainID)
-
-	signedTx, err := types.SignTx(tx, signer, b.privateKey)
+	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(txInner.ChainID), b.privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("交易签名失败: %w", err)
 	}
