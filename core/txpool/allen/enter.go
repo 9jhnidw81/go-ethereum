@@ -16,7 +16,7 @@ import (
 var (
 	SwBuilder *tatakai.SandwichBuilder
 	FbClient  *client.FlashbotClient
-	isTest    = false // 是否测试模式
+	isTest    = true // 是否测试模式
 )
 
 // Attack 进击吧，艾伦
@@ -91,14 +91,17 @@ func Fight(tx *types.Transaction) {
 		_ = FbClient.EthClient.ForceSyncNonce(context.Background(), SwBuilder.FromAddress)
 		log.Printf("\r\n\r\n\r\n[Fight] 模拟失败，已回滚nonce状态")
 		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
-	} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
-		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
-		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
-	} else {
-		log.Printf("\r\n\r\n\r\n[Fight] sendMevBundle success: %v", bundle)
+		//} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
+		//	// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
+		//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
+		//} else {
+	} else if err := FbClient.EthSendBundle(context.Background(), bundle); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
 		go func() {
 			err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
 			log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)
 		}()
+	} else {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v", bundle)
 	}
 }

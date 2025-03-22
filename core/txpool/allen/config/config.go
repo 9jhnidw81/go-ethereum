@@ -82,8 +82,29 @@ func Get(network Network) *Config {
 				Slippage:       0.05,
 			},
 			DefaultGas: 200000,
+			//Builders: []string{
+			//	"https://relay-sepolia.flashbots.net", "https://builder-testnet.bloxroute.com",
+			//},
 			Builders: []string{
-				"https://relay-sepolia.flashbots.net", "https://builder-testnet.bloxroute.com",
+				"flashbots",
+				"f1b.io",
+				"rsync",
+				"beaverbuild.org",
+				"builder0x69",
+				"Titan",
+				"EigenPhi",
+				"boba-builder",
+				"Gambit Labs",
+				"payload",
+				"Loki",
+				"BuildAI",
+				"JetBuilder",
+				"tbuilder",
+				"penguinbuild",
+				"bobthebuilder",
+				"BTCS",
+				"bloXroute",
+				"Blockbeelder",
 			},
 		}
 	case Mainnet:
@@ -104,6 +125,12 @@ func Get(network Network) *Config {
 				Slippage:       0.05, // 推荐滑点 3%（高波动代币需增加）
 			},
 			DefaultGas: 400000,
+			//Builders: []string{
+			//	"https://relay.flashbots.net",  // Flashbots主网中继
+			//	"https://builder0x69.io",       // 主流builder
+			//	"https://rsync-builder.xyz",    // 常用builder
+			//	"https://rpc.titanbuilder.xyz", // 高性能builder
+			//},
 			Builders: []string{
 				"https://relay.flashbots.net",  // Flashbots主网中继
 				"https://builder0x69.io",       // 主流builder

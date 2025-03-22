@@ -35,18 +35,32 @@ type FlashbotClient struct {
 
 // MevSendBundleRequest 完整文档结构定义
 type MevSendBundleRequest struct {
-	JsonRPC string        `json:"jsonrpc"`
-	ID      string        `json:"id"`
-	Method  string        `json:"method"`
-	Params  []BundleParam `json:"params"`
+	JsonRPC string               `json:"jsonrpc"`
+	ID      string               `json:"id"`
+	Method  string               `json:"method"`
+	Params  []MevSendBundleParam `json:"params"`
 }
 
-type BundleParam struct {
+// EthSendBundleRequest 完整文档结构定义
+type EthSendBundleRequest struct {
+	JsonRPC string               `json:"jsonrpc"`
+	ID      string               `json:"id"`
+	Method  string               `json:"method"`
+	Params  []EthSendBundleParam `json:"params"`
+}
+
+type MevSendBundleParam struct {
 	Version   string     `json:"version"`
 	Inclusion Inclusion  `json:"inclusion"`
 	Body      []BodyItem `json:"body"`
 	Validity  *Validity  `json:"validity,omitempty"`
 	Privacy   *Privacy   `json:"privacy,omitempty"`
+}
+
+type EthSendBundleParam struct {
+	Txs         []string `json:"txs"`
+	BlockNumber string   `json:"blockNumber"`
+	Builders    []string `json:"builders,omitempty"`
 }
 
 type Inclusion struct {
@@ -55,10 +69,10 @@ type Inclusion struct {
 }
 
 type BodyItem struct {
-	Hash      *string      `json:"hash,omitempty"`
-	Tx        *string      `json:"tx,omitempty"`
-	CanRevert *bool        `json:"canRevert,omitempty"`
-	Bundle    *BundleParam `json:"bundle,omitempty"`
+	Hash      *string             `json:"hash,omitempty"`
+	Tx        *string             `json:"tx,omitempty"`
+	CanRevert *bool               `json:"canRevert,omitempty"`
+	Bundle    *MevSendBundleParam `json:"bundle,omitempty"`
 }
 
 type Validity struct {
@@ -103,7 +117,7 @@ func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transac
 		JsonRPC: "2.0",
 		ID:      "1",
 		Method:  "mev_sendBundle",
-		Params:  []BundleParam{*bundleParam},
+		Params:  []MevSendBundleParam{*bundleParam},
 	}
 	payload, _ := json.Marshal(param)
 	req, _ := http.NewRequest("POST", c.config.FlashbotsEndpoint, bytes.NewBuffer(payload))
@@ -117,6 +131,38 @@ func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transac
 	resp, _ := mevHTTPClient.Do(req)
 	res, _ := ioutil.ReadAll(resp.Body)
 	fmt.Println("Mev_sendBundle")
+	fmt.Println(string(res))
+	return nil
+}
+
+func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transaction) error {
+	bundleParam, err := c.buildEthBundleParam(ctx, txs)
+	if err != nil {
+		return err
+	}
+	mevHTTPClient := &http.Client{
+		Timeout: time.Second * 5,
+	}
+
+	param := EthSendBundleRequest{
+		JsonRPC: "2.0",
+		ID:      "1",
+		Method:  "eth_sendBundle",
+		Params:  []EthSendBundleParam{*bundleParam},
+	}
+	payload, _ := json.Marshal(param)
+	fmt.Println("payload", string(payload))
+	req, _ := http.NewRequest("POST", c.config.FlashbotsEndpoint, bytes.NewBuffer(payload))
+	headerReady, _ := crypto.Sign(
+		accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
+		c.privateKey,
+	)
+	req.Header.Add("content-type", j)
+	req.Header.Add("Accept", j)
+	req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
+	resp, _ := mevHTTPClient.Do(req)
+	res, _ := ioutil.ReadAll(resp.Body)
+	fmt.Println("Eth_sendBundle")
 	fmt.Println(string(res))
 	return nil
 }
@@ -178,7 +224,7 @@ func (c *FlashbotClient) CallBundle(ctx context.Context, txs []*types.Transactio
 	return err
 }
 
-func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.Transaction) (*BundleParam, error) {
+func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.Transaction) (*MevSendBundleParam, error) {
 	// 构建交易参数
 	bodyItems := make([]BodyItem, 0, len(txs))
 	for _, tx := range txs {
@@ -198,7 +244,7 @@ func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.T
 	maxBlock := fmt.Sprintf("0x%x", currentBlock+3)
 
 	// 构建完整Bundle参数
-	bundle := BundleParam{
+	bundle := MevSendBundleParam{
 		Version: "v0.1",
 		//Version: "v0.2",
 		Inclusion: Inclusion{
@@ -221,6 +267,30 @@ func (c *FlashbotClient) buildMevBundleParam(ctx context.Context, txs []*types.T
 			//Builders: []string{"flashbots", "builder0x69-testnet"},
 		},
 		Body: bodyItems,
+	}
+	return &bundle, nil
+}
+
+func (c *FlashbotClient) buildEthBundleParam(ctx context.Context, txs []*types.Transaction) (*EthSendBundleParam, error) {
+	// 构建交易参数
+	rawTxs := make([]string, 0, len(txs))
+	for _, tx := range txs {
+		data, err := tx.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		rawTxs = append(rawTxs, "0x"+hex.EncodeToString(data))
+	}
+
+	// 设置区块
+	currentBlock, _ := c.EthClient.BlockNumber(ctx)
+	targetBlock := fmt.Sprintf("0x%x", currentBlock+1)
+
+	// 构建完整Bundle参数
+	bundle := EthSendBundleParam{
+		Txs:         rawTxs,
+		BlockNumber: targetBlock,
+		Builders:    c.config.Builders,
 	}
 	return &bundle, nil
 }

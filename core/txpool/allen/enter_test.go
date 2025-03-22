@@ -15,6 +15,7 @@ import (
 func testInitAllen() *ethclient.Client {
 	//ethCli, err := ethclient.Dial("wss://sepolia.infura.io/ws/v3/7d5a6189348c438ab586891e09415578")
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
+	//ethCli, err := ethclient.Dial("https://mainnet.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
 	ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
 	if err != nil {
 		panic(err)
@@ -32,6 +33,8 @@ func TestMockFight(t *testing.T) {
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0xe2af59cf8a33fc7697c4420055ae62bb66750819ca6e5a027d867c3eacfb69dd"))
 	// yu-btc
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x838e57cbe839b44be98131b5e7df3d86cd93ff19900b5bb6f0a8d81278cd2cbd"))
+	// eth-BWINX, 主网
+	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x4adbc33afea3c7f041c64d0f3f8807f5efb596d8e125bdec17429e31b93aa15d"))
 	if err != nil {
 		panic(err)
 	}

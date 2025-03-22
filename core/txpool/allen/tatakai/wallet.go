@@ -34,7 +34,7 @@ func GetParams(path string) (string, string, error) {
 	method := "GET"
 
 	client := &http.Client{
-		Timeout: time.Second * 5,
+		Timeout: time.Second * 10,
 	}
 	req, err := http.NewRequest(method, url, nil)
 
