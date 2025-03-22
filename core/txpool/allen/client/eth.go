@@ -118,7 +118,7 @@ func (c *EthClient) MonitorSendingTx(ctx context.Context, txs []*types.Transacti
 	}
 
 	firstTx := txs[0]
-	fromAddress, err := types.Sender(types.NewEIP155Signer(c.Config.ChainID), firstTx)
+	fromAddress, err := types.Sender(types.LatestSignerForChainID(c.Config.ChainID), firstTx)
 	if err != nil {
 		return fmt.Errorf("[%s] 解析发送地址失败: %w", methodPrefix, err)
 	}
@@ -254,7 +254,7 @@ func (c *EthClient) SpeedNonce(
 	})
 
 	// 签名交易
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(c.Config.ChainID), privateKey)
+	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(c.Config.ChainID), privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("[%s] 交易签名失败: %w", methodPrefix, err)
 	}
