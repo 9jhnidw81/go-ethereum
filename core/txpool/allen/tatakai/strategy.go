@@ -24,6 +24,7 @@ import (
 
 // TODO: 动态递增gas (如果连续成功好几次，但是没有一次真正的成功，则考虑动态递增gas，有最高限制)
 // TODO: 测试网络先保证一直夹，再确保主网也能一直夹
+// TODO：主网不判断利润直接夹？
 const (
 	// 买入滑点
 	slipPointBuy = 10
@@ -44,22 +45,22 @@ const (
 	// 每次实际交易的千分比 千分位, 997=>3手续费，即0.3%手续费
 	actualTradeRatio = 997
 	// 计算利润空间的前导交易滑点
-	slipPointFrontGasLimit = 50
+	slipPointFrontGasLimit = 30
 	// 计算利润空间的后导交易滑点
-	slipPointBackGasLimit = 70
+	slipPointBackGasLimit = 30
 	// ctx超时时间
 	ctxExpireTime = time.Second * 20
 )
 
 var (
 	// 每次滑点增长幅度
-	slipPointIncreaseRate int32 = 100
+	slipPointIncreaseRate int32 = 1000
 	// 最大滑点
-	slipPointIncreaseMax int32 = 7000
-	// gas价格滑点
-	slipPointGasPrice int32 = 700
-	// 矿工小费gas滑点
-	slipPointGasTipCap int32 = 700
+	slipPointIncreaseMax int32 = 50000
+	// gas价格滑点，100为1倍，125为1.25倍
+	slipPointGasPrice int32 = 5000
+	// 矿工小费gas滑点，100为1倍，125为1.25倍
+	slipPointGasTipCap int32 = 5000
 )
 
 type SandwichBuilder struct {
