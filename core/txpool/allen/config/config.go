@@ -114,6 +114,24 @@ func Get(network Network) *Config {
 			RPCURL: "wss://mainnet.infura.io/ws/v3/",
 			FlashbotsEndpoint: []string{
 				"https://relay.flashbots.net",
+				"https://rpc.f1b.io",
+				"https://rsync-builder.xyz",
+				"https://mevshare-rpc.beaverbuild.org",
+				"https://builder0x69.io",
+				"https://rpc.titanbuilder.xyz",
+				"https://builder.eigenphi.io",
+				"https://boba-builder.com/searcher/bundle",
+				"https://builder.gmbit.co/rpc",
+				"https://rpc.payload.de",
+				"https://rpc.lokibuilder.xyz",
+				"https://buildai.net",
+				"https://rpc.mevshare.jetbldr.xyz",
+				"https://flashbots.rpc.tbuilder.xyz",
+				"https://rpc.penguinbuild.org",
+				"https://rpc.bobthebuilder.xyz",
+				"https://flashbots.btcs.com",
+				"https://rpc-builder.blxrbdn.com",
+				"https://blockbeelder.com/rpc",
 			},
 			RouterAddress:  "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
 			WETHAddress:    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
@@ -136,10 +154,25 @@ func Get(network Network) *Config {
 			//	"https://rpc.titanbuilder.xyz", // 高性能builder
 			//},
 			Builders: []string{
-				"https://relay.flashbots.net",  // Flashbots主网中继
-				"https://builder0x69.io",       // 主流builder
-				"https://rsync-builder.xyz",    // 常用builder
-				"https://rpc.titanbuilder.xyz", // 高性能builder
+				"flashbots",
+				"f1b.io",
+				"rsync",
+				"beaverbuild.org",
+				"builder0x69",
+				"Titan",
+				"EigenPhi",
+				"boba-builder",
+				"Gambit Labs",
+				"payload",
+				"Loki",
+				"BuildAI",
+				"JetBuilder",
+				"tbuilder",
+				"penguinbuild",
+				"bobthebuilder",
+				"BTCS",
+				"bloXroute",
+				"Blockbeelder",
 			},
 		}
 	default:

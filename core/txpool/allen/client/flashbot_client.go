@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"golang.org/x/sync/errgroup"
 	"io/ioutil"
 	"net/http"
@@ -195,14 +196,17 @@ func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transac
 			req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
 			resp, err := mevHTTPClient.Do(req)
 			if err != nil {
-				return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
+				log.Info(methodPrefix, "-", endPoints[i], "do request failed", err)
+				return nil
+				//return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
 			}
 			res, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
+				log.Info(methodPrefix, "-", endPoints[i], "read all body", resp.Body, " failed", err)
+				return nil
+				//return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
 			}
-			fmt.Println("Eth_sendBundle")
-			fmt.Println(string(res))
+			fmt.Printf("Eth_sendBundle-%s-%s\n", endPoints[i], string(res))
 			return nil
 		})
 	}

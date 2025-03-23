@@ -422,16 +422,16 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		//return nil, common2.ErrNotEnoughProfit
+		return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
 	if needApprove && approveTx != nil {
-		return []*types.Transaction{approveTx, frontTx, backTx}, nil
-		//return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
+		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
+		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
 	}
-	return []*types.Transaction{frontTx, backTx}, nil
-	//return []*types.Transaction{frontTx, tx, backTx}, nil
+	//return []*types.Transaction{frontTx, backTx}, nil
+	return []*types.Transaction{frontTx, tx, backTx}, nil
 }
 
 // 构建买入交易（前跑）
