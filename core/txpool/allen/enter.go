@@ -99,6 +99,12 @@ func Fight(tx *types.Transaction) {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
 		go func() {
 			err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
+			if err != nil {
+				log.Printf("[Fight] MonitorSendingTx failed: %v before gasPrice:%v gasTipCap:%v", err, tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
+				tatakai.IncreaseSlipPointGasPrice()
+				tatakai.IncreaseSlipPointGasTipCap()
+				log.Printf("[Fight] MonitorSendingTx after gasPrice:%v gasTipCap:%v", tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
+			}
 			log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)
 		}()
 	} else {

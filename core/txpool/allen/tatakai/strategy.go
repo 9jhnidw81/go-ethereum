@@ -12,15 +12,18 @@ import (
 	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"golang.org/x/sync/errgroup"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // TODO: 动态递增gas (如果连续成功好几次，但是没有一次真正的成功，则考虑动态递增gas，有最高限制)
+// TODO: 测试网络先保证一直夹，再确保主网也能一直夹
 const (
 	// 买入滑点
 	slipPointBuy = 10
@@ -30,10 +33,6 @@ const (
 	slipPointGasLimit = 500
 	// 授权gas滑点
 	approveSlipPointGas = 200
-	// gas价格滑点
-	slipPointGasPrice = 700
-	// 矿工小费gas滑点
-	slipPointGasTipCap = 700
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
 	expireTime = time.Minute * 5
 	// 最大授权额度
@@ -50,6 +49,17 @@ const (
 	slipPointBackGasLimit = 70
 	// ctx超时时间
 	ctxExpireTime = time.Second * 20
+)
+
+var (
+	// 每次滑点增长幅度
+	slipPointIncreaseRate int32 = 100
+	// 最大滑点
+	slipPointIncreaseMax int32 = 7000
+	// gas价格滑点
+	slipPointGasPrice int32 = 700
+	// 矿工小费gas滑点
+	slipPointGasTipCap int32 = 700
 )
 
 type SandwichBuilder struct {
@@ -275,17 +285,18 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 
 	/***********************************交易前置准备***********************************/
 	// 获取连续nonce
-	frontNonce, err := b.ethClient.GetSequentialNonce(ctx, b.FromAddress)
+	//frontNonce, err := b.ethClient.GetSequentialNonce(ctx, b.FromAddress)
+	frontNonce, err := b.ethClient.PendingNonceAt(ctx, b.FromAddress)
 	if err != nil {
 		return nil, err
 	}
 	backNonce := frontNonce + 1
 
 	// 滑点价格
-	gasPrice = CalculateWithSlippageEx(gasPrice, slipPointGasPrice)
-	gasTipCap = CalculateWithSlippageEx(gasTipCap, slipPointGasTipCap)
+	gasPrice = CalculateWithSlippageEx(gasPrice, GetSlipPointGasPrice())
+	gasTipCap = CalculateWithSlippageEx(gasTipCap, GetSlipPointGasTipCap())
 	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
-	fmt.Println("sum", sum, gasPrice)
+	fmt.Println("sum", sum, gasPrice, GetSlipPointGasPrice(), GetSlipPointGasTipCap())
 
 	// 必须满足gasPrice >= baseFee + tipCap
 	if gasPrice.Cmp(sum) < 0 {
@@ -422,10 +433,11 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		return nil, common2.ErrNotEnoughProfit
+		//return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
+	log.Info("[Fight] nonce:", approveNonce, frontNonce, backNonce, "token:", path[1], "GasPrice", gasPrice, WeiToEth(gasPrice), "GasTipCap", gasTipCap, WeiToEth(gasTipCap))
 	if needApprove && approveTx != nil {
 		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
 		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
@@ -908,4 +920,41 @@ func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Tr
 		return nil, fmt.Errorf("交易签名失败: %w", err)
 	}
 	return signedTx, nil
+}
+
+func atomicIncrease(target *int32, rate, max int32) {
+	for {
+		old := atomic.LoadInt32(target)
+		newVal := old + rate
+		if newVal > max {
+			newVal = max
+		}
+		if atomic.CompareAndSwapInt32(target, old, newVal) {
+			break
+		}
+	}
+}
+
+// GetSlipPointGasPrice 并发安全获取 gas价格滑点
+func GetSlipPointGasPrice() int {
+	return int(atomic.LoadInt32(&slipPointGasPrice))
+}
+
+// IncreaseSlipPointGasPrice 安全递增
+func IncreaseSlipPointGasPrice() {
+	rate := atomic.LoadInt32(&slipPointIncreaseRate)
+	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
+	atomicIncrease(&slipPointGasPrice, rate, maxVal)
+}
+
+// GetSlipPointGasTipCap 并发安全获取矿工小费gas滑点
+func GetSlipPointGasTipCap() int {
+	return int(atomic.LoadInt32(&slipPointGasTipCap))
+}
+
+// IncreaseSlipPointGasTipCap 安全递增
+func IncreaseSlipPointGasTipCap() {
+	rate := atomic.LoadInt32(&slipPointIncreaseRate)
+	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
+	atomicIncrease(&slipPointGasTipCap, rate, maxVal)
 }
