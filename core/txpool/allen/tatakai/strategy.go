@@ -54,13 +54,13 @@ const (
 
 var (
 	// 每次滑点增长幅度
-	slipPointIncreaseRate int32 = 1000
+	slipPointIncreaseRate int32 = 100
 	// 最大滑点
-	slipPointIncreaseMax int32 = 50000
+	slipPointIncreaseMax int32 = 5000
 	// gas价格滑点，100为1倍，125为1.25倍
-	slipPointGasPrice int32 = 5000
+	slipPointGasPrice int32 = 200
 	// 矿工小费gas滑点，100为1倍，125为1.25倍
-	slipPointGasTipCap int32 = 5000
+	slipPointGasTipCap int32 = 200
 )
 
 type SandwichBuilder struct {
