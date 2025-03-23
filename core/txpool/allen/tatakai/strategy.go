@@ -433,11 +433,20 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil, err
 	}
 	if !isProfitable {
-		//return nil, common2.ErrNotEnoughProfit
+		return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
-	log.Info("[Fight] nonce:", approveNonce, frontNonce, backNonce, "token:", path[1], "GasPrice", gasPrice, WeiToEth(gasPrice), "GasTipCap", gasTipCap, WeiToEth(gasTipCap))
+	log.Info("[Fight]",
+		"approveNonce", approveNonce,
+		"frontNonce", frontNonce,
+		"backNonce", backNonce,
+		"token", path[1],
+		"gasPrice", gasPrice,
+		"gasPriceETH", WeiToEth(gasPrice),
+		"gasTipCap", gasTipCap,
+		"gasTipCapETH", WeiToEth(gasTipCap),
+	)
 	if needApprove && approveTx != nil {
 		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
 		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
