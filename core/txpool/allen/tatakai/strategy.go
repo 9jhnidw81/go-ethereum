@@ -22,9 +22,14 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+// 优化：
+// 1.单位时间为（同一区块内），同一个代币的交易可以多次夹击，但可能成功率会比较低（备选、单次夹击（正常gas）+多次夹击（更高gas）一起）
+
 // TODO: 动态递增gas (如果连续成功好几次，但是没有一次真正的成功，则考虑动态递增gas，有最高限制)
 // TODO: 测试网络先保证一直夹，再确保主网也能一直夹
 // TODO：主网不判断利润直接夹？
+// TODO: 最低最高gas并行发送
+// TODO: 一个受害者tx，并行发起多个交易，其中看似不同的bundle，实则攻击同一个代币（比如可插入黑洞转入的gas？），矿工拿到交易的时候虽然交易没啥意义，但是矿工能拿到额外一笔gas费用
 const (
 	// 买入滑点
 	slipPointBuy = 10
@@ -293,17 +298,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	backNonce := frontNonce + 1
 
-	// 滑点价格
-	gasPrice = CalculateWithSlippageEx(gasPrice, GetSlipPointGasPrice())
-	gasTipCap = CalculateWithSlippageEx(gasTipCap, GetSlipPointGasTipCap())
-	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
-	fmt.Println("sum", sum, gasPrice, GetSlipPointGasPrice(), GetSlipPointGasTipCap())
-
-	// 必须满足gasPrice >= baseFee + tipCap
-	if gasPrice.Cmp(sum) < 0 {
-		gasPrice = sum
-	}
-
 	// 获取代币储备量
 	reserveInput, reserveOutput, err := b.getPoolReserves(ctx, &pairAddress, path[0], path[1])
 	if err != nil {
@@ -332,10 +326,20 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		needSetApprovedStatus bool
 		approveNonce          uint64
 	)
-	if needSetApprovedStatus = allowance.Cmp(big.NewInt(0)) == 0 && !b.isTokenApproved(path[1]); needSetApprovedStatus {
+	if needSetApprovedStatus = allowance.Cmp(big.NewInt(0)) == 0; needSetApprovedStatus {
 		approveNonce = frontNonce
 		frontNonce++ // TODO: 这里会有问题，假设授权没报错，但是三明治攻击失败，nonce已经递增了，此时会导致后面的nonce全部失败？
 		backNonce++  // TODO: 可能需要定期检查nonce有效性？或者监控三明治攻击失败的时候，用自转0eth的方式重新清洗nonce？
+	}
+	// 滑点价格
+	gasPrice = CalculateWithSlippageEx(gasPrice, GetSlipPointGasPrice())
+	gasTipCap = CalculateWithSlippageEx(gasTipCap, GetSlipPointGasTipCap())
+	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
+	fmt.Println("sum", sum, gasPrice, GetSlipPointGasPrice(), GetSlipPointGasTipCap())
+
+	// 必须满足gasPrice >= baseFee + tipCap
+	if gasPrice.Cmp(sum) < 0 {
+		gasPrice = sum
 	}
 	eg2.Go(func() error {
 		// 需要授权
@@ -354,7 +358,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 				syncErr := b.ethClient.ForceSyncNonce(ctx, b.FromAddress)
 				return fmt.Errorf("授权失败(%v)，触发nonce同步(%v)", err, syncErr)
 			}
-			b.setTokenApprove(path[1])
 			needApprove = true
 			approveTx = at
 		}
