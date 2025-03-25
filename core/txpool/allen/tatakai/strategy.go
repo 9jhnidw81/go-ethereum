@@ -55,6 +55,8 @@ const (
 	slipPointBackGasLimit = 30
 	// ctx超时时间
 	ctxExpireTime = time.Second * 20
+	// flashbot重试次数
+	flashbotRetryCount = 3
 )
 
 var (
@@ -532,7 +534,7 @@ func (b *SandwichBuilder) sendToFlashbot(ctx context.Context, bundle []*types.Tr
 	if err := b.fbClient.CallBundle(ctx, bundle); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v", err, bundle)
 		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
-	} else if err := b.fbClient.EthSendBundle(ctx, bundle); err != nil {
+	} else if err := b.fbClient.EthSendBundle(ctx, bundle, flashbotRetryCount); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
 	} else {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v", bundle)

@@ -158,7 +158,7 @@ func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transac
 	return nil
 }
 
-func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transaction) error {
+func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transaction, retryCount int) error {
 	const (
 		methodPrefix = "EthSendBundle"
 	)
@@ -185,35 +185,35 @@ func (c *FlashbotClient) EthSendBundle(ctx context.Context, txs []*types.Transac
 
 	endPoints := c.config.FlashbotsEndpoint
 	for i := 0; i < len(endPoints); i++ {
-		eg.Go(func() error {
-			req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
-			headerReady, _ := crypto.Sign(
-				accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
-				c.privateKey,
-			)
-			req.Header.Add("content-type", j)
-			req.Header.Add("Accept", j)
-			req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
-			resp, err := mevHTTPClient.Do(req)
-			if err != nil {
-				log.Info(methodPrefix, "-", endPoints[i], "do request failed", err)
+		for k := 0; k < retryCount; k++ {
+			eg.Go(func() error {
+				req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
+				headerReady, _ := crypto.Sign(
+					accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
+					c.privateKey,
+				)
+				req.Header.Add("content-type", j)
+				req.Header.Add("Accept", j)
+				req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
+				resp, err := mevHTTPClient.Do(req)
+				if err != nil {
+					log.Info(methodPrefix, "-", endPoints[i], "do request failed", err)
+					return err
+					//return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
+				}
+				res, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					log.Info(methodPrefix, "-", endPoints[i], "read all body", resp.Body, " failed", err)
+					return err
+					//return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
+				}
+				fmt.Printf("Eth_sendBundle-%s-%s\n", endPoints[i], string(res))
 				return nil
-				//return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
-			}
-			res, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Info(methodPrefix, "-", endPoints[i], "read all body", resp.Body, " failed", err)
-				return nil
-				//return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
-			}
-			fmt.Printf("Eth_sendBundle-%s-%s\n", endPoints[i], string(res))
-			return nil
-		})
+			})
+		}
 	}
 
-	if err = eg.Wait(); err != nil {
-		return err
-	}
+	_ = eg.Wait()
 
 	return nil
 }
