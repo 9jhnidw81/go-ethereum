@@ -1021,16 +1021,17 @@ func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Tr
 // 辅助方法：根据Gas最低最高构建Gas范围
 func (b *SandwichBuilder) generateGasRange(gasPrice, gasTipCap, gasBaseFee *big.Int) ([]*big.Int, []*big.Int) {
 	gasPriceRange, gasTipCapRange := make([]*big.Int, 0), make([]*big.Int, 0)
-	for i := int32(1); i < (slipPointGasPriceMax-slipPointGasPriceMin)/slipPointIncreasePer; i++ {
-		// 当前倍数
-		curMultiple := i * slipPointIncreasePer
-		curGasTipCap := CalculateWithSlippageEx(gasTipCap, int(curMultiple))
 
-		curGasPrice := CalculateWithSlippageEx(gasPrice, int(curMultiple))
-		curSum := new(big.Int).Add(gasBaseFee, curGasTipCap)
-		// 必须满足gasPrice >= baseFee + tipCap
-		if curGasPrice.Cmp(curSum) < 0 {
-			curGasPrice = curSum
+	// 从最低滑点开始，每次递增直到超过最高值
+	for current := slipPointGasPriceMin; current <= slipPointGasPriceMax; current += slipPointIncreasePer {
+		// 计算当前滑点下的值
+		curGasTipCap := CalculateWithSlippageEx(gasTipCap, int(current))
+		curGasPrice := CalculateWithSlippageEx(gasPrice, int(current))
+
+		// 确保 gasPrice >= baseFee + tipCap
+		minGasPrice := new(big.Int).Add(gasBaseFee, curGasTipCap)
+		if curGasPrice.Cmp(minGasPrice) < 0 {
+			curGasPrice = minGasPrice
 		}
 		gasTipCapRange = append(gasTipCapRange, curGasTipCap)
 		gasPriceRange = append(gasPriceRange, curGasPrice)

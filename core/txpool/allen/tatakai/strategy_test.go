@@ -10,6 +10,6 @@ func TestSandwichBuilder_generateGasRange(t *testing.T) {
 	gasPrice := big.NewInt(400)
 	gasTipCap := big.NewInt(200)
 	gasBaseFee := big.NewInt(100)
-	got, got1 := b.generateGasRange(gasPrice, gasTipCap, gasBaseFee)
-	t.Log(got, got1)
+	price, tipCap := b.generateGasRange(gasPrice, gasTipCap, gasBaseFee)
+	t.Log(price, tipCap)
 }
