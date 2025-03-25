@@ -36,11 +36,11 @@ func Attack(ethClient *ethclient.Client) {
 	// uniswap解析器
 	parser, _ := tatakai.NewParser(cfg)
 
-	// 三明治构建器
-	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey), cfg.DefaultGas)
-
 	// Flashbot机器人
 	FbClient = client.NewFlashbotClient(cfg, myEthClient, loadPrivateKey(privateKey))
+
+	// 三明治构建器
+	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey), cfg.DefaultGas, FbClient)
 }
 
 func calculatePrivateKey() string {
@@ -74,7 +74,7 @@ func loadPrivateKey(privateKey string) *ecdsa.PrivateKey {
 
 // Fight 塔塔开
 func Fight(tx *types.Transaction) {
-	bundle, err := SwBuilder.Build(context.Background(), tx)
+	_, err := SwBuilder.Build(context.Background(), tx)
 	if err != nil {
 		if err != common.ErrNotUniswapTx && err != common.ErrNotBuyMethod && err != common.ErrNotUniswapBuyTx {
 			log.Printf("[Fight] build failed: %v", err)
@@ -84,30 +84,30 @@ func Fight(tx *types.Transaction) {
 	// 模拟交易
 	// 提高gas
 	// 三个nonce
-	if err := FbClient.CallBundle(context.Background(), bundle); err != nil {
-		// TODO： nonce too high(因为之前有三明治交易没有成功交易，导致本地的nonce一直在增加，使用更高的nonce导致交易被拒)
-		// TODO: 还需要知道当前累计发送的nonce记录
-		// 新增错误回滚
-		_ = FbClient.EthClient.ForceSyncNonce(context.Background(), SwBuilder.FromAddress)
-		log.Printf("\r\n\r\n\r\n[Fight] 模拟失败，已回滚nonce状态")
-		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
-		//} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
-		//	// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
-		//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
-		//} else {
-	} else if err := FbClient.EthSendBundle(context.Background(), bundle); err != nil {
-		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
-		go func() {
-			err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
-			if err != nil {
-				log.Printf("[Fight] MonitorSendingTx failed: %v before gasPrice:%v gasTipCap:%v", err, tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
-				tatakai.IncreaseSlipPointGasPrice()
-				tatakai.IncreaseSlipPointGasTipCap()
-				log.Printf("[Fight] MonitorSendingTx after gasPrice:%v gasTipCap:%v", tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
-			}
-			log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)
-		}()
-	} else {
-		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v", bundle)
-	}
+	//if err := FbClient.CallBundle(context.Background(), bundle); err != nil {
+	//	// TODO： nonce too high(因为之前有三明治交易没有成功交易，导致本地的nonce一直在增加，使用更高的nonce导致交易被拒)
+	//	// TODO: 还需要知道当前累计发送的nonce记录
+	//	// 新增错误回滚
+	//	_ = FbClient.EthClient.ForceSyncNonce(context.Background(), SwBuilder.FromAddress)
+	//	log.Printf("\r\n\r\n\r\n[Fight] 模拟失败，已回滚nonce状态")
+	//	log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v\n\n\n", err, bundle)
+	//	//} else if err := FbClient.MevSendBundle(context.Background(), bundle); err != nil {
+	//	//	// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
+	//	//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v, bundle: %v\n\n\n", err, bundle)
+	//	//} else {
+	//} else if err := FbClient.EthSendBundle(context.Background(), bundle); err != nil {
+	//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
+	//	go func() {
+	//		err := client.MyEthCli.MonitorSendingTx(context.Background(), bundle)
+	//		if err != nil {
+	//			log.Printf("[Fight] MonitorSendingTx failed: %v before gasPrice:%v gasTipCap:%v", err, tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
+	//			tatakai.IncreaseSlipPointGasPrice()
+	//			tatakai.IncreaseSlipPointGasTipCap()
+	//			log.Printf("[Fight] MonitorSendingTx after gasPrice:%v gasTipCap:%v", tatakai.GetSlipPointGasPrice(), tatakai.GetSlipPointGasTipCap())
+	//		}
+	//		log.Printf("\r\n\r\n\r\n[Fight] MonitorSendingTx finished: %v\n\n\n", err)
+	//	}()
+	//} else {
+	//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v", bundle)
+	//}
 }

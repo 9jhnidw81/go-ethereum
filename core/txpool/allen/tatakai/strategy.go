@@ -12,8 +12,8 @@ import (
 	common2 "github.com/ethereum/go-ethereum/core/txpool/allen/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 	"golang.org/x/sync/errgroup"
+	"log"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -62,14 +62,21 @@ var (
 	slipPointIncreaseRate int32 = 100
 	// 最大滑点
 	slipPointIncreaseMax int32 = 5000
-	// gas价格滑点，100为1倍，125为1.25倍
-	slipPointGasPrice int32 = 200
-	// 矿工小费gas滑点，100为1倍，125为1.25倍
-	slipPointGasTipCap int32 = 200
+	// gas价格滑点，100为递增1倍，125为1.25倍，最低倍数（gasPrice与gasTipCap一致）
+	slipPointGasPriceMin int32 = 100
+	// 矿工小费gas滑点，100为递增1倍，125为1.25倍，最低倍数
+	slipPointGasTipCapMin int32 = 100
+	// gas价格滑点，100为递增1倍，125为1.25倍，最高倍数（gasPrice与gasTipCap一致）
+	slipPointGasPriceMax int32 = 100 * 20
+	// 矿工小费gas滑点，100为递增1倍，125为1.25倍，最高倍数
+	slipPointGasTipCapMax int32 = 100 * 20
+	// 每次递增倍数，在原来的基础上递增多少倍
+	slipPointIncreasePer int32 = 200
 )
 
 type SandwichBuilder struct {
 	ethClient   *client.EthClient
+	fbClient    *client.FlashbotClient
 	parser      *TransactionParser
 	privateKey  *ecdsa.PrivateKey
 	FromAddress common.Address
@@ -84,6 +91,35 @@ type SwapParams struct {
 	AmountIn  *big.Int // 代币输入量
 	AmountOut *big.Int // 代币输出量
 	Deadline  *big.Int // 交易有效时间
+}
+
+type BuildBundleTxParams struct {
+	// 受害者原始交易
+	VictimTx *types.Transaction
+	//受害者交易输入数量(ETH or Token)
+	VictimInAmount *big.Int
+	// 前导交易输入数量(ETH or Token)
+	FrontInAmount *big.Int
+	// 矿工小费Gas
+	GasTipCap *big.Int
+	// Gas 价格
+	GasPrice *big.Int
+	// 授权交易nonce
+	ApproveNonce uint64
+	// 前导交易nonce
+	FrontNonce uint64
+	// 后导交易nonce
+	BackNonce uint64
+	// 交易对地址
+	PairAddress common.Address
+	// 交易对地址数组
+	Path []common.Address
+	// 输入代币储备量
+	ReserveInput *big.Int
+	// 输出代币储备量
+	ReserveOutput *big.Int
+	// 需要授权
+	NeedApprove bool
 }
 
 type BuildFrontRunTxParams struct {
@@ -166,9 +202,10 @@ type ArbitrageProfitableParams struct {
 	ReserveOutput *big.Int
 }
 
-func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, pk *ecdsa.PrivateKey, defaultGas uint64) *SandwichBuilder {
+func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, pk *ecdsa.PrivateKey, defaultGas uint64, fbClient *client.FlashbotClient) *SandwichBuilder {
 	return &SandwichBuilder{
 		ethClient:   ethClient,
+		fbClient:    fbClient,
 		parser:      parser,
 		privateKey:  pk,
 		DefaultGas:  defaultGas,
@@ -178,19 +215,13 @@ func NewSandwichBuilder(ethClient *client.EthClient, parser *TransactionParser, 
 
 func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*types.Transaction, error) {
 	var (
-		eg               errgroup.Group     // 并行操作
-		gasPrice         *big.Int           // 每个gas的价格
-		gasTipCap        *big.Int           // 矿工小费gas
-		gasBaseFee       *big.Int           // 基础gas费用
-		allowance        *big.Int           // 代币授权Router额度
-		pairAddress      common.Address     // 交易对地址
-		approveTx        *types.Transaction // 授权交易
-		frontTx          *types.Transaction // 前导交易
-		backTx           *types.Transaction // 后导交易
-		frontEstimateGas uint64             // 前导交易建议Gas
-		backEstimateGas  uint64             // 后导交易建议Gas
-		needApprove      bool               // 是否需要授权
-		cancel           context.CancelFunc // 超时退出
+		eg          errgroup.Group     // 并行操作
+		gasPrice    *big.Int           // 每个gas的价格
+		gasTipCap   *big.Int           // 矿工小费gas
+		gasBaseFee  *big.Int           // 基础gas费用
+		allowance   *big.Int           // 代币授权Router额度
+		pairAddress common.Address     // 交易对地址
+		cancel      context.CancelFunc // 超时退出
 	)
 	ctx, cancel = context.WithTimeout(ctx, ctxExpireTime)
 	defer cancel()
@@ -322,60 +353,94 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 
 	/***********************************授权前后导交易***********************************/
 	var (
-		eg2                   errgroup.Group
-		needSetApprovedStatus bool
-		approveNonce          uint64
+		eg2          errgroup.Group // 并行减少等待时间
+		needApprove  bool           // 是否需要授权
+		approveNonce uint64         // 授权交易的nonce
 	)
-	if needSetApprovedStatus = allowance.Cmp(big.NewInt(0)) == 0; needSetApprovedStatus {
+	if needApprove = allowance.Cmp(big.NewInt(0)) == 0; needApprove {
 		approveNonce = frontNonce
-		frontNonce++ // TODO: 这里会有问题，假设授权没报错，但是三明治攻击失败，nonce已经递增了，此时会导致后面的nonce全部失败？
-		backNonce++  // TODO: 可能需要定期检查nonce有效性？或者监控三明治攻击失败的时候，用自转0eth的方式重新清洗nonce？
+		frontNonce++
+		backNonce++
 	}
-	// 滑点价格
-	gasPrice = CalculateWithSlippageEx(gasPrice, GetSlipPointGasPrice())
-	gasTipCap = CalculateWithSlippageEx(gasTipCap, GetSlipPointGasTipCap())
-	sum := new(big.Int).Add(gasBaseFee, gasTipCap)
-	fmt.Println("sum", sum, gasPrice, GetSlipPointGasPrice(), GetSlipPointGasTipCap())
 
-	// 必须满足gasPrice >= baseFee + tipCap
-	if gasPrice.Cmp(sum) < 0 {
-		gasPrice = sum
+	// 普通bundle: 不同Gas交易
+	gasPriceRange, gasTipCapRange := b.generateGasRange(gasPrice, gasTipCap, gasBaseFee)
+	for i := 0; i < len(gasPriceRange); i++ {
+		k := i
+		eg2.Go(func() error {
+			bundle, err := b.buildBundleTx(context.Background(), BuildBundleTxParams{
+				VictimTx:       tx,
+				VictimInAmount: victimInAmount,
+				FrontInAmount:  frontInAmount,
+				GasTipCap:      gasTipCapRange[k],
+				GasPrice:       gasPriceRange[k],
+				ApproveNonce:   approveNonce,
+				FrontNonce:     frontNonce,
+				BackNonce:      backNonce,
+				PairAddress:    pairAddress,
+				Path:           path,
+				ReserveInput:   reserveInput,
+				ReserveOutput:  reserveOutput,
+				NeedApprove:    needApprove,
+			})
+			if err != nil {
+				log.Printf("[Fight] buildBundleTx failed:%+v", err)
+				return err
+			}
+			b.sendToFlashbot(context.Background(), bundle)
+			return nil
+		})
 	}
-	eg2.Go(func() error {
+
+	// 增强bundle: 黑洞+三明治交易
+	_ = eg2.Wait()
+	return nil, nil
+}
+
+// 构建授权前后导交易、利润判断
+func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxParams) ([]*types.Transaction, error) {
+	var (
+		eg               errgroup.Group
+		approveTx        *types.Transaction // 授权交易
+		frontTx          *types.Transaction // 前导交易
+		backTx           *types.Transaction // 后导交易
+		frontEstimateGas uint64             // 前导交易建议Gas
+		backEstimateGas  uint64             // 后导交易建议Gas
+		needApprove      bool               // 是否需要授权
+	)
+
+	eg.Go(func() error {
 		// 需要授权
-		if needSetApprovedStatus {
+		if in.NeedApprove {
 			maxAmountIn := new(big.Int)
 			maxAmountIn.SetString(maxApproveAmount, 16)
 			at, err := b.buildApproveTx(ctx, BuildApproveTxParams{
-				GasTipCap:    gasTipCap,
-				GasPrice:     gasPrice,
-				ApproveNonce: approveNonce,
-				TokenAddress: path[1],
+				GasTipCap:    in.GasTipCap,
+				GasPrice:     in.GasPrice,
+				ApproveNonce: in.ApproveNonce,
+				TokenAddress: in.Path[1],
 				AmountIn:     maxAmountIn,
 			})
 			if err != nil {
-				// 立即强制同步nonce
-				syncErr := b.ethClient.ForceSyncNonce(ctx, b.FromAddress)
-				return fmt.Errorf("授权失败(%v)，触发nonce同步(%v)", err, syncErr)
+				return fmt.Errorf("构建授权交易失败(%v)", err)
 			}
-			needApprove = true
 			approveTx = at
 		}
 		return nil
 	})
 
-	eg2.Go(func() error {
+	eg.Go(func() error {
 		// 前导交易
 		ft, feg, err := b.buildFrontRunTx(ctx, BuildFrontRunTxParams{
-			VictimTx:      tx,
-			FrontInAmount: frontInAmount,
-			GasTipCap:     gasTipCap,
-			GasPrice:      gasPrice,
-			FrontNonce:    frontNonce,
-			PairAddress:   pairAddress,
-			Path:          path,
-			ReserveInput:  reserveInput,
-			ReserveOutput: reserveOutput,
+			VictimTx:      in.VictimTx,
+			FrontInAmount: in.FrontInAmount,
+			GasTipCap:     in.GasTipCap,
+			GasPrice:      in.GasPrice,
+			FrontNonce:    in.FrontNonce,
+			PairAddress:   in.PairAddress,
+			Path:          in.Path,
+			ReserveInput:  in.ReserveInput,
+			ReserveOutput: in.ReserveOutput,
 		})
 		if err != nil {
 			return err
@@ -384,19 +449,19 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		return nil
 	})
 
-	eg2.Go(func() error {
+	eg.Go(func() error {
 		// 后导交易
 		bt, err := b.buildBackRunTx(ctx, BuildBackRunTxParams{
-			VictimTx:       tx,
-			VictimInAmount: victimInAmount,
-			FrontInAmount:  frontInAmount,
-			GasTipCap:      gasTipCap,
-			GasPrice:       gasPrice,
-			BackNonce:      backNonce,
-			PairAddress:    pairAddress,
-			Path:           path,
-			ReserveInput:   reserveInput,
-			ReserveOutput:  reserveOutput,
+			VictimTx:       in.VictimTx,
+			VictimInAmount: in.VictimInAmount,
+			FrontInAmount:  in.FrontInAmount,
+			GasTipCap:      in.GasTipCap,
+			GasPrice:       in.GasPrice,
+			BackNonce:      in.BackNonce,
+			PairAddress:    in.PairAddress,
+			Path:           in.Path,
+			ReserveInput:   in.ReserveInput,
+			ReserveOutput:  in.ReserveOutput,
 		})
 		if err != nil {
 			return err
@@ -406,7 +471,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	})
 
 	// 等待所有并行任务完成
-	if err = eg2.Wait(); err != nil {
+	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -422,16 +487,16 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	//真实交易跟模拟利润差了1倍，真实交易实际扣了0.00003494ETH，计算出来的是0.000068ETH
 	isProfitable, err := b.isArbitrageProfitable(ArbitrageProfitableParams{
-		VictimTx:       tx,
-		VictimInAmount: victimInAmount,
-		FrontInAmount:  frontInAmount,
+		VictimTx:       in.VictimTx,
+		VictimInAmount: in.VictimInAmount,
+		FrontInAmount:  in.FrontInAmount,
 		TotalGas:       totalGas,
-		GasPrice:       gasPrice,
-		BackNonce:      backNonce,
-		PairAddress:    pairAddress,
-		Path:           path,
-		ReserveInput:   reserveInput,
-		ReserveOutput:  reserveOutput,
+		GasPrice:       in.GasPrice,
+		BackNonce:      in.BackNonce,
+		PairAddress:    in.PairAddress,
+		Path:           in.Path,
+		ReserveInput:   in.ReserveInput,
+		ReserveOutput:  in.ReserveOutput,
 	})
 	if err != nil {
 		return nil, err
@@ -441,22 +506,34 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	/***********************************利润空间判断***********************************/
 
-	log.Info("[Fight]",
-		"approveNonce", approveNonce,
-		"frontNonce", frontNonce,
-		"backNonce", backNonce,
-		"token", path[1],
-		"gasPrice", gasPrice,
-		"gasPriceETH", WeiToEth(gasPrice),
-		"gasTipCap", gasTipCap,
-		"gasTipCapETH", WeiToEth(gasTipCap),
+	log.Println("[Fight]",
+		"approveNonce", in.ApproveNonce,
+		"frontNonce", in.FrontNonce,
+		"backNonce", in.BackNonce,
+		"token", in.Path[1],
+		"gasPrice", in.GasPrice,
+		"gasPriceETH", WeiToEth(in.GasPrice),
+		"gasTipCap", in.GasTipCap,
+		"gasTipCapETH", WeiToEth(in.GasTipCap),
 	)
 	if needApprove && approveTx != nil {
 		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
-		return []*types.Transaction{approveTx, frontTx, tx, backTx}, nil
+		return []*types.Transaction{approveTx, frontTx, in.VictimTx, backTx}, nil
 	}
 	//return []*types.Transaction{frontTx, backTx}, nil
-	return []*types.Transaction{frontTx, tx, backTx}, nil
+	return []*types.Transaction{frontTx, in.VictimTx, backTx}, nil
+}
+
+// 发送到Flashbot机器人
+func (b *SandwichBuilder) sendToFlashbot(ctx context.Context, bundle []*types.Transaction) {
+	if err := b.fbClient.CallBundle(ctx, bundle); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v", err, bundle)
+		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
+	} else if err := b.fbClient.EthSendBundle(ctx, bundle); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
+	} else {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle success: %v", bundle)
+	}
 }
 
 // 构建买入交易（前跑）
@@ -935,6 +1012,26 @@ func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Tr
 	return signedTx, nil
 }
 
+// 辅助方法：根据Gas最低最高构建Gas范围
+func (b *SandwichBuilder) generateGasRange(gasPrice, gasTipCap, gasBaseFee *big.Int) ([]*big.Int, []*big.Int) {
+	gasPriceRange, gasTipCapRange := make([]*big.Int, 0), make([]*big.Int, 0)
+	for i := int32(1); i < (slipPointGasPriceMax-slipPointGasPriceMin)/slipPointIncreasePer; i++ {
+		// 当前倍数
+		curMultiple := i * slipPointIncreasePer
+		curGasTipCap := CalculateWithSlippageEx(gasTipCap, int(curMultiple))
+
+		curGasPrice := CalculateWithSlippageEx(gasPrice, int(curMultiple))
+		curSum := new(big.Int).Add(gasBaseFee, curGasTipCap)
+		// 必须满足gasPrice >= baseFee + tipCap
+		if curGasPrice.Cmp(curSum) < 0 {
+			curGasPrice = curSum
+		}
+		gasTipCapRange = append(gasTipCapRange, curGasTipCap)
+		gasPriceRange = append(gasPriceRange, curGasPrice)
+	}
+	return gasPriceRange, gasTipCapRange
+}
+
 func atomicIncrease(target *int32, rate, max int32) {
 	for {
 		old := atomic.LoadInt32(target)
@@ -950,24 +1047,24 @@ func atomicIncrease(target *int32, rate, max int32) {
 
 // GetSlipPointGasPrice 并发安全获取 gas价格滑点
 func GetSlipPointGasPrice() int {
-	return int(atomic.LoadInt32(&slipPointGasPrice))
+	return int(atomic.LoadInt32(&slipPointGasPriceMin))
 }
 
 // IncreaseSlipPointGasPrice 安全递增
 func IncreaseSlipPointGasPrice() {
 	rate := atomic.LoadInt32(&slipPointIncreaseRate)
 	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
-	atomicIncrease(&slipPointGasPrice, rate, maxVal)
+	atomicIncrease(&slipPointGasPriceMin, rate, maxVal)
 }
 
 // GetSlipPointGasTipCap 并发安全获取矿工小费gas滑点
 func GetSlipPointGasTipCap() int {
-	return int(atomic.LoadInt32(&slipPointGasTipCap))
+	return int(atomic.LoadInt32(&slipPointGasTipCapMin))
 }
 
 // IncreaseSlipPointGasTipCap 安全递增
 func IncreaseSlipPointGasTipCap() {
 	rate := atomic.LoadInt32(&slipPointIncreaseRate)
 	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
-	atomicIncrease(&slipPointGasTipCap, rate, maxVal)
+	atomicIncrease(&slipPointGasTipCapMin, rate, maxVal)
 }
