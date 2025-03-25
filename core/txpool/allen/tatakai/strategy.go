@@ -919,7 +919,8 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 
 	// 调试输出
 	fmt.Printf(
-		"[Profit-Fight] 投入总成本: %s | 买入成本:%s | Gas成本: %s | 实际利润：%s\n",
+		"[Profit-Fight] 代币:%v, 投入总成本: %s | 买入成本:%s | Gas成本: %s | 实际利润：%s\n",
+		in.Path[1],
 		WeiToEth(totalCost),
 		WeiToEth(in.FrontInAmount),
 		WeiToEth(gasCostWei),
