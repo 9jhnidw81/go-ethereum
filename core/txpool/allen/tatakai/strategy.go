@@ -190,6 +190,8 @@ type ArbitrageProfitableParams struct {
 	TotalGas uint64
 	// Gas 价格
 	GasPrice *big.Int
+	// 矿工小费Gas
+	GasTipCap *big.Int
 	// 后导交易nonce
 	BackNonce uint64
 	// 交易对地址
@@ -492,6 +494,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		FrontInAmount:  in.FrontInAmount,
 		TotalGas:       totalGas,
 		GasPrice:       in.GasPrice,
+		GasTipCap:      in.GasTipCap,
 		BackNonce:      in.BackNonce,
 		PairAddress:    in.PairAddress,
 		Path:           in.Path,
@@ -918,9 +921,11 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 	profit := new(big.Int).Sub(backEthOut, totalCost)
 
 	// 调试输出
-	fmt.Printf(
-		"[Profit-Fight] 代币:%v, 投入总成本: %s | 买入成本:%s | Gas成本: %s | 实际利润：%s\n",
+	log.Printf(
+		"[Profit-Fight] 代币:%v, GasPrice/TipCap:%v-%v 投入总成本:%s | 买入成本:%s | Gas成本:%s | 实际利润%s\n",
 		in.Path[1],
+		in.GasPrice,
+		in.GasTipCap,
 		WeiToEth(totalCost),
 		WeiToEth(in.FrontInAmount),
 		WeiToEth(gasCostWei),
