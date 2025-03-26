@@ -391,7 +391,7 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 				log.Printf("[Fight] buildBundleTx failed:%+v", err)
 				return err
 			}
-			b.sendToFlashbot(context.Background(), bundle)
+			b.sendToFlashbot(context.Background(), bundle, path[1])
 			return nil
 		})
 	}
@@ -530,9 +530,9 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 }
 
 // 发送到Flashbot机器人
-func (b *SandwichBuilder) sendToFlashbot(ctx context.Context, bundle []*types.Transaction) {
+func (b *SandwichBuilder) sendToFlashbot(ctx context.Context, bundle []*types.Transaction, address common.Address) {
 	if err := b.fbClient.CallBundle(ctx, bundle); err != nil {
-		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v", err, bundle)
+		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v, token: %v", err, bundle, address)
 		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
 	} else if err := b.fbClient.EthSendBundle(ctx, bundle, flashbotRetryCount); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
