@@ -410,7 +410,6 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		backTx           *types.Transaction // 后导交易
 		frontEstimateGas uint64             // 前导交易建议Gas
 		backEstimateGas  uint64             // 后导交易建议Gas
-		needApprove      bool               // 是否需要授权
 	)
 
 	eg.Go(func() error {
@@ -486,7 +485,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 	backEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointBackGasLimit)
 	frontEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointFrontGasLimit)
 	totalGas := frontEstimateGas + backEstimateGas
-	if needApprove && approveTx != nil {
+	if in.NeedApprove && approveTx != nil {
 		totalGas += approveTx.Gas()
 	}
 	//真实交易跟模拟利润差了1倍，真实交易实际扣了0.00003494ETH，计算出来的是0.000068ETH
@@ -521,7 +520,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		"gasTipCap", in.GasTipCap,
 		"gasTipCapETH", WeiToEth(in.GasTipCap),
 	)
-	if needApprove && approveTx != nil {
+	if in.NeedApprove && approveTx != nil {
 		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
 		return []*types.Transaction{approveTx, frontTx, in.VictimTx, backTx}, nil
 	}
