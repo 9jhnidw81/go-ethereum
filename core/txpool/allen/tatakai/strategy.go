@@ -252,7 +252,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	/***********************************前置操作***********************************/
 
 	/***********************************并行减少时间***********************************/
-	startTime := time.Now()
 	// 同步链上nonce
 	//eg.Go(func() error {
 	//	return b.ethClient.SyncNonce(ctx, b.FromAddress)
@@ -326,8 +325,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	/***********************************并行减少时间***********************************/
 
-	midTime := time.Now()
-	fmt.Println("首个go执行时间", midTime.UnixMilli()-startTime.UnixMilli(), "毫秒")
 	/***********************************交易前置准备***********************************/
 	// 获取连续nonce
 	//frontNonce, err := b.ethClient.GetSequentialNonce(ctx, b.FromAddress)
@@ -359,8 +356,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	frontInAmount.Div(frontInAmount, big.NewInt(100))
 	/***********************************交易前置准备***********************************/
 
-	midTime2 := time.Now()
-	fmt.Println("第二个go执行时间", midTime2.UnixMilli()-midTime.UnixMilli(), "毫秒")
 	/***********************************授权前后导交易***********************************/
 	var (
 		eg2          errgroup.Group // 并行减少等待时间
@@ -410,8 +405,6 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	// 增强bundle: 黑洞+三明治交易
 	_ = eg2.Wait()
 
-	midTime3 := time.Now()
-	fmt.Println("第三个go执行时间", midTime3.UnixMilli()-midTime2.UnixMilli(), "毫秒")
 	return nil, nil
 }
 
