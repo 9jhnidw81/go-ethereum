@@ -16,7 +16,6 @@ import (
 	"log"
 	"math/big"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -34,7 +33,7 @@ const (
 	// 买入滑点
 	slipPointBuy = 10
 	// 卖出滑点
-	slipPointSell = 90
+	slipPointSell = 10
 	// Gas limit滑点，最高使用的gas上限，若上限1000，实际使用100，则会返还900，所以这里往大了设置没关系
 	slipPointGasLimit = 500
 	// 授权gas滑点
@@ -45,8 +44,6 @@ const (
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
 	frontRunRatio = 80
-	// 后导交易量比例 60%
-	backRunRatio = 60
 	// 每次实际交易的千分比 千分位, 997=>3手续费，即0.3%手续费
 	actualTradeRatio = 997
 	// 计算利润空间的前导交易滑点
@@ -56,22 +53,14 @@ const (
 	// ctx超时时间
 	ctxExpireTime = time.Second * 20
 	// flashbot重试次数
-	flashbotRetryCount = 3
+	flashbotRetryCount = 5
 )
 
 var (
-	// 每次滑点增长幅度
-	slipPointIncreaseRate int32 = 100
-	// 最大滑点
-	slipPointIncreaseMax int32 = 5000
 	// gas价格滑点，100为递增1倍，125为1.25倍，最低倍数（gasPrice与gasTipCap一致）
 	slipPointGasPriceMin int32 = 100
-	// 矿工小费gas滑点，100为递增1倍，125为1.25倍，最低倍数
-	slipPointGasTipCapMin int32 = 100
 	// gas价格滑点，100为递增1倍，125为1.25倍，最高倍数（gasPrice与gasTipCap一致）
 	slipPointGasPriceMax int32 = 100 * 20
-	// 矿工小费gas滑点，100为递增1倍，125为1.25倍，最高倍数
-	slipPointGasTipCapMax int32 = 100 * 20
 	// 每次递增倍数，在原来的基础上递增多少倍
 	slipPointIncreasePer int32 = 200
 )
@@ -688,7 +677,7 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 	}
 	data, err := b.parser.uniswapABI.Pack(methodName,
 		frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币
-		big.NewInt(0), // 愿意接受的 最少能换到多少 ETH
+		amountOutMin,  // 愿意接受的 最少能换到多少 ETH
 		reversePath,   // 交易路径[代币A, 代币B] [代币地址, WETH地址]
 		b.FromAddress, // ETH接收地址
 		deadline,      // 交易过期时间戳
@@ -998,17 +987,6 @@ func (b *SandwichBuilder) getAllowance(ctx context.Context, tokenAddr, spender c
 	return allowance, nil
 }
 
-// 辅助方法：判断代币是否授权, 读取本地状态
-func (b *SandwichBuilder) isTokenApproved(token common.Address) bool {
-	_, ok := b.approveTokenMap.Load(token)
-	return ok
-}
-
-// 辅助方法：代币授权标记, 写入本地状态
-func (b *SandwichBuilder) setTokenApprove(token common.Address) {
-	b.approveTokenMap.Store(token, true)
-}
-
 // 辅助方法：构建签名交易
 func (b *SandwichBuilder) buildAndSignTx(txInner *types.DynamicFeeTx) (*types.Transaction, error) {
 	tx := types.NewTx(txInner)
@@ -1038,41 +1016,4 @@ func (b *SandwichBuilder) generateGasRange(gasPrice, gasTipCap, gasBaseFee *big.
 		gasPriceRange = append(gasPriceRange, curGasPrice)
 	}
 	return gasPriceRange, gasTipCapRange
-}
-
-func atomicIncrease(target *int32, rate, max int32) {
-	for {
-		old := atomic.LoadInt32(target)
-		newVal := old + rate
-		if newVal > max {
-			newVal = max
-		}
-		if atomic.CompareAndSwapInt32(target, old, newVal) {
-			break
-		}
-	}
-}
-
-// GetSlipPointGasPrice 并发安全获取 gas价格滑点
-func GetSlipPointGasPrice() int {
-	return int(atomic.LoadInt32(&slipPointGasPriceMin))
-}
-
-// IncreaseSlipPointGasPrice 安全递增
-func IncreaseSlipPointGasPrice() {
-	rate := atomic.LoadInt32(&slipPointIncreaseRate)
-	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
-	atomicIncrease(&slipPointGasPriceMin, rate, maxVal)
-}
-
-// GetSlipPointGasTipCap 并发安全获取矿工小费gas滑点
-func GetSlipPointGasTipCap() int {
-	return int(atomic.LoadInt32(&slipPointGasTipCapMin))
-}
-
-// IncreaseSlipPointGasTipCap 安全递增
-func IncreaseSlipPointGasTipCap() {
-	rate := atomic.LoadInt32(&slipPointIncreaseRate)
-	maxVal := atomic.LoadInt32(&slipPointIncreaseMax)
-	atomicIncrease(&slipPointGasTipCapMin, rate, maxVal)
 }
