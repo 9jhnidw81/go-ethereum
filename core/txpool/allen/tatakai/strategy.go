@@ -30,7 +30,7 @@ import (
 // TODO: 最低最高gas并行发送
 // TODO: 一个受害者tx，并行发起多个交易，其中看似不同的bundle，实则攻击同一个代币（比如可插入黑洞转入的gas？），矿工拿到交易的时候虽然交易没啥意义，但是矿工能拿到额外一笔gas费用
 const (
-	// 买入滑点
+	// 买入滑点，10->10%，也就是原来的基础上+10%
 	slipPointBuy = 10
 	// 卖出滑点
 	slipPointSell = 10
@@ -39,11 +39,11 @@ const (
 	// 授权gas滑点
 	approveSlipPointGas = 200
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
-	expireTime = time.Minute * 5
+	expireTime = time.Minute * 2
 	// 最大授权额度
 	maxApproveAmount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	// 前导交易量比例 60%
-	frontRunRatio = 80
+	frontRunRatio = 60
 	// 每次实际交易的千分比 千分位, 997=>3手续费，即0.3%手续费
 	actualTradeRatio = 997
 	// 计算利润空间的前导交易滑点
