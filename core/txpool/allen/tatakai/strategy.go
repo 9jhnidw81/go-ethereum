@@ -35,7 +35,7 @@ const (
 	// 卖出滑点
 	slipPointSell = 10
 	// Gas limit滑点，最高使用的gas上限，若上限1000，实际使用100，则会返还900，所以这里往大了设置没关系
-	slipPointGasLimit = 500
+	slipPointGasLimit = 800
 	// 授权gas滑点
 	approveSlipPointGas = 200
 	// 交易有效时间(仅用于合约，无法用于区块链网络有效时间)
@@ -46,9 +46,11 @@ const (
 	frontRunRatio = 60
 	// 每次实际交易的千分比 千分位, 997=>3手续费，即0.3%手续费
 	actualTradeRatio = 997
-	// 计算利润空间的前导交易滑点
+	// 计算利润空间的授权交易滑点，也就是比建议的gas再多一些
+	slipPointApproveGasLimit = 30
+	// 计算利润空间的前导交易滑点，也就是比建议的gas再多一些
 	slipPointFrontGasLimit = 30
-	// 计算利润空间的后导交易滑点
+	// 计算利润空间的后导交易滑点，也就是比建议的gas再多一些
 	slipPointBackGasLimit = 30
 	// ctx超时时间
 	ctxExpireTime = time.Second * 20
@@ -63,6 +65,8 @@ var (
 	slipPointGasPriceMax int32 = 100 * 20
 	// 每次递增倍数，在原来的基础上递增多少倍
 	slipPointIncreasePer int32 = 200
+	// 后导价格gas price递增倍数，100为递增1倍
+	slipPointGasPriceBack int32 = 100
 )
 
 type SandwichBuilder struct {
@@ -91,10 +95,14 @@ type BuildBundleTxParams struct {
 	VictimInAmount *big.Int
 	// 前导交易输入数量(ETH or Token)
 	FrontInAmount *big.Int
-	// 矿工小费Gas
+	// 矿工小费Gas(前导+授权)
 	GasTipCap *big.Int
-	// Gas 价格
+	// Gas 价格(前导+授权)
 	GasPrice *big.Int
+	// 矿工小费Gas(后导)
+	GasTipCapBack *big.Int
+	// Gas 价格(后导)
+	GasPriceBack *big.Int
 	// 授权交易nonce
 	ApproveNonce uint64
 	// 前导交易nonce
@@ -177,12 +185,16 @@ type ArbitrageProfitableParams struct {
 	VictimInAmount *big.Int
 	// 前导交易输入数量(ETH or Token)
 	FrontInAmount *big.Int
-	// 总共耗费的Gas
-	TotalGas uint64
-	// Gas 价格
-	GasPrice *big.Int
-	// 矿工小费Gas
+	// 总共耗费的Gas价值
+	TotalGasCostWei *big.Int
+	// 矿工小费Gas(前导+授权)
 	GasTipCap *big.Int
+	// Gas 价格(前导+授权)
+	GasPrice *big.Int
+	// 矿工小费Gas(后导)
+	GasTipCapBack *big.Int
+	// Gas 价格(后导)
+	GasPriceBack *big.Int
 	// 后导交易nonce
 	BackNonce uint64
 	// 交易对地址
@@ -240,10 +252,11 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	/***********************************前置操作***********************************/
 
 	/***********************************并行减少时间***********************************/
+	startTime := time.Now()
 	// 同步链上nonce
-	eg.Go(func() error {
-		return b.ethClient.SyncNonce(ctx, b.FromAddress)
-	})
+	//eg.Go(func() error {
+	//	return b.ethClient.SyncNonce(ctx, b.FromAddress)
+	//})
 
 	// 获取当前gas price
 	eg.Go(func() error {
@@ -296,16 +309,16 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	})
 
 	// 获取余额
-	eg.Go(func() error {
-		ba, err := b.ethClient.BalanceAt(ctx, b.FromAddress, nil)
-		if err != nil {
-			return err
-		}
-		if ba.Int64() == 0 {
-			return errors.New("not enough balance")
-		}
-		return nil
-	})
+	//eg.Go(func() error {
+	//	ba, err := b.ethClient.BalanceAt(ctx, b.FromAddress, nil)
+	//	if err != nil {
+	//		return err
+	//	}
+	//	if ba.Int64() == 0 {
+	//		return errors.New("not enough balance")
+	//	}
+	//	return nil
+	//})
 
 	// 等待所有并行任务完成
 	if err = eg.Wait(); err != nil {
@@ -313,6 +326,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	}
 	/***********************************并行减少时间***********************************/
 
+	midTime := time.Now()
+	fmt.Println("首个go执行时间", midTime.UnixMilli()-startTime.UnixMilli(), "毫秒")
 	/***********************************交易前置准备***********************************/
 	// 获取连续nonce
 	//frontNonce, err := b.ethClient.GetSequentialNonce(ctx, b.FromAddress)
@@ -344,6 +359,8 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	frontInAmount.Div(frontInAmount, big.NewInt(100))
 	/***********************************交易前置准备***********************************/
 
+	midTime2 := time.Now()
+	fmt.Println("第二个go执行时间", midTime2.UnixMilli()-midTime.UnixMilli(), "毫秒")
 	/***********************************授权前后导交易***********************************/
 	var (
 		eg2          errgroup.Group // 并行减少等待时间
@@ -361,12 +378,17 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 	for i := 0; i < len(gasPriceRange); i++ {
 		k := i
 		eg2.Go(func() error {
+			// 后导价格要更高一些（参考大神）
+			backGasTipCap := CalculateWithSlippageEx(gasTipCapRange[k], int(slipPointGasPriceBack))
+			backGasPrice := CalculateWithSlippageEx(gasPriceRange[k], int(slipPointGasPriceBack))
 			bundle, err := b.buildBundleTx(context.Background(), BuildBundleTxParams{
 				VictimTx:       tx,
 				VictimInAmount: victimInAmount,
 				FrontInAmount:  frontInAmount,
 				GasTipCap:      gasTipCapRange[k],
 				GasPrice:       gasPriceRange[k],
+				GasTipCapBack:  backGasTipCap,
+				GasPriceBack:   backGasPrice,
 				ApproveNonce:   approveNonce,
 				FrontNonce:     frontNonce,
 				BackNonce:      backNonce,
@@ -387,18 +409,22 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 
 	// 增强bundle: 黑洞+三明治交易
 	_ = eg2.Wait()
+
+	midTime3 := time.Now()
+	fmt.Println("第三个go执行时间", midTime3.UnixMilli()-midTime2.UnixMilli(), "毫秒")
 	return nil, nil
 }
 
 // 构建授权前后导交易、利润判断
 func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxParams) ([]*types.Transaction, error) {
 	var (
-		eg               errgroup.Group
-		approveTx        *types.Transaction // 授权交易
-		frontTx          *types.Transaction // 前导交易
-		backTx           *types.Transaction // 后导交易
-		frontEstimateGas uint64             // 前导交易建议Gas
-		backEstimateGas  uint64             // 后导交易建议Gas
+		eg                 errgroup.Group
+		approveTx          *types.Transaction // 授权交易
+		frontTx            *types.Transaction // 前导交易
+		backTx             *types.Transaction // 后导交易
+		approveEstimateGas uint64             // 授权交易建议Gas
+		frontEstimateGas   uint64             // 前导交易建议Gas
+		backEstimateGas    uint64             // 后导交易建议Gas
 	)
 
 	eg.Go(func() error {
@@ -406,7 +432,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		if in.NeedApprove {
 			maxAmountIn := new(big.Int)
 			maxAmountIn.SetString(maxApproveAmount, 16)
-			at, err := b.buildApproveTx(ctx, BuildApproveTxParams{
+			at, aeg, err := b.buildApproveTx(ctx, BuildApproveTxParams{
 				GasTipCap:    in.GasTipCap,
 				GasPrice:     in.GasPrice,
 				ApproveNonce: in.ApproveNonce,
@@ -416,7 +442,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 			if err != nil {
 				return fmt.Errorf("构建授权交易失败(%v)", err)
 			}
-			approveTx = at
+			approveTx, approveEstimateGas = at, aeg
 		}
 		return nil
 	})
@@ -447,8 +473,8 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 			VictimTx:       in.VictimTx,
 			VictimInAmount: in.VictimInAmount,
 			FrontInAmount:  in.FrontInAmount,
-			GasTipCap:      in.GasTipCap,
-			GasPrice:       in.GasPrice,
+			GasTipCap:      in.GasTipCapBack,
+			GasPrice:       in.GasPriceBack,
 			BackNonce:      in.BackNonce,
 			PairAddress:    in.PairAddress,
 			Path:           in.Path,
@@ -471,25 +497,37 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 
 	/***********************************利润空间判断***********************************/
 	// 由于后导交易的建议gas获取不到，这里采用前导交易增加滑点的方式
+	// 授权+前导+后导建议的gas数量
+	approveEstimateGas = CalculateUint64SlipPoint(approveEstimateGas, slipPointApproveGasLimit)
 	backEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointBackGasLimit)
 	frontEstimateGas = CalculateUint64SlipPoint(frontEstimateGas, slipPointFrontGasLimit)
-	totalGas := frontEstimateGas + backEstimateGas
-	if in.NeedApprove && approveTx != nil {
-		totalGas += approveTx.Gas()
-	}
+	frontGasCostWei, approveGasCostWei, backGasCostWei := new(big.Int).Mul(
+		big.NewInt(int64(frontEstimateGas)),
+		in.GasPrice,
+	), new(big.Int).Mul(
+		big.NewInt(int64(approveEstimateGas)),
+		in.GasPrice,
+	), new(big.Int).Mul(
+		big.NewInt(int64(backEstimateGas)),
+		in.GasPriceBack,
+	)
+
+	totalGasCostWei := new(big.Int).Add(frontGasCostWei, backGasCostWei).Add(common.Big0, approveGasCostWei)
 	//真实交易跟模拟利润差了1倍，真实交易实际扣了0.00003494ETH，计算出来的是0.000068ETH
 	isProfitable, err := b.isArbitrageProfitable(ArbitrageProfitableParams{
-		VictimTx:       in.VictimTx,
-		VictimInAmount: in.VictimInAmount,
-		FrontInAmount:  in.FrontInAmount,
-		TotalGas:       totalGas,
-		GasPrice:       in.GasPrice,
-		GasTipCap:      in.GasTipCap,
-		BackNonce:      in.BackNonce,
-		PairAddress:    in.PairAddress,
-		Path:           in.Path,
-		ReserveInput:   in.ReserveInput,
-		ReserveOutput:  in.ReserveOutput,
+		VictimTx:        in.VictimTx,
+		VictimInAmount:  in.VictimInAmount,
+		FrontInAmount:   in.FrontInAmount,
+		TotalGasCostWei: totalGasCostWei,
+		GasTipCap:       in.GasTipCap,
+		GasPrice:        in.GasPrice,
+		GasTipCapBack:   in.GasTipCapBack,
+		GasPriceBack:    in.GasPriceBack,
+		BackNonce:       in.BackNonce,
+		PairAddress:     in.PairAddress,
+		Path:            in.Path,
+		ReserveInput:    in.ReserveInput,
+		ReserveOutput:   in.ReserveOutput,
 	})
 	if err != nil {
 		return nil, err
@@ -629,7 +667,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 }
 
 // 构建卖入交易（后跑）
-func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxParams) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxParams) (*types.Transaction, error) {
 	const (
 		methodPrefix = "buildBackRunTx"
 	)
@@ -689,18 +727,18 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 
 	/***********************************估算Gas Limit***********************************/
 	gasLimit := b.DefaultGas
-	estimatedGas, err := b.ethClient.EstimateGas(ctx, ethereum.CallMsg{
-		From:      b.FromAddress,
-		To:        in.VictimTx.To(),
-		GasTipCap: in.GasTipCap, // 矿工Gas费用
-		GasFeeCap: in.GasPrice,  // 总Gas费用上限
-		Data:      data,
-	})
-	// TODO: [优化] 由于卖出交易必错，因为没有持有数量无法计算建议gas，这里可能会导致浪费很多gas，建议获取前导gas？
+	// 由于必错，就没必要浪费时间去获取建议gas了
+	//estimatedGas, err := b.ethClient.EstimateGas(ctx, ethereum.CallMsg{
+	//	From:      b.FromAddress,
+	//	To:        in.VictimTx.To(),
+	//	GasTipCap: in.GasTipCap, // 矿工Gas费用
+	//	GasFeeCap: in.GasPrice,  // 总Gas费用上限
+	//	Data:      data,
+	//})
 	// 处理gas估算错误
-	if estimatedGas > 0 {
-		gasLimit = estimatedGas
-	}
+	//if estimatedGas > 0 {
+	//	gasLimit = estimatedGas
+	//}
 	/***********************************估算Gas Limit***********************************/
 
 	/***********************************构建并签名交易***********************************/
@@ -724,11 +762,11 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 }
 
 // 构建授权交易
-func (b *SandwichBuilder) buildApproveTx(ctx context.Context, in BuildApproveTxParams) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildApproveTx(ctx context.Context, in BuildApproveTxParams) (*types.Transaction, uint64, error) {
 	// 打包调用数据
 	approveData, err := b.parser.erc20ABI.Pack("approve", b.parser.routerAddress, in.AmountIn)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	approveCallMsg := ethereum.CallMsg{
 		From:      b.FromAddress,
@@ -758,10 +796,10 @@ func (b *SandwichBuilder) buildApproveTx(ctx context.Context, in BuildApproveTxP
 	}
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return signedTx, nil
+	return signedTx, estimatedGas, nil
 }
 
 // 辅助方法：解析兑换参数
@@ -898,27 +936,22 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 	// 成本利润计算
 	//-------------------
 	// 总投入成本（前导交易金额 + Gas成本）
-	totalCost := new(big.Int).Set(in.FrontInAmount)
-
-	// Gas成本转换（假设GasPrice单位是Wei）
-	gasCostWei := new(big.Int).Mul(
-		big.NewInt(int64(in.TotalGas)),
-		in.GasPrice,
-	)
-	totalCost.Add(totalCost, gasCostWei)
+	totalCost := new(big.Int).Add(in.FrontInAmount, in.TotalGasCostWei)
 
 	// 最终利润
 	profit := new(big.Int).Sub(backEthOut, totalCost)
 
 	// 调试输出
 	log.Printf(
-		"[Profit-Fight] 代币:%v, GasPrice/TipCap:%v-%v 投入总成本:%s | 买入成本:%s | Gas成本:%s | 实际利润%s\n",
+		"[Profit-Fight] 代币:%v, GasPrice/TipCap:%v/%v GasPriceBack/TipCapBack:%v/%v 投入总成本:%s | 买入成本:%s | Gas成本:%s | 实际利润%s\n",
 		in.Path[1],
 		in.GasPrice,
 		in.GasTipCap,
+		in.GasPriceBack,
+		in.GasTipCapBack,
 		WeiToEth(totalCost),
 		WeiToEth(in.FrontInAmount),
-		WeiToEth(gasCostWei),
+		WeiToEth(in.TotalGasCostWei),
 		WeiToEth(profit),
 	)
 

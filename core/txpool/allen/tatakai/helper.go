@@ -74,9 +74,9 @@ func WeiToEth(wei *big.Int) string {
 	// 格式化为带符号的4位小数
 	value, _ := eth.Float64()
 	if value >= 0 {
-		return fmt.Sprintf("+%.6f ETH", value)
+		return fmt.Sprintf("+%.10f ETH", value)
 	}
-	return fmt.Sprintf("-%.6f ETH", -value) // 负号前置并取正值
+	return fmt.Sprintf("-%.10f ETH", -value) // 负号前置并取正值
 }
 
 // CalculateOutputAmount 辅助方法：Uniswap输出量计算

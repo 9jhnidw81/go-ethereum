@@ -13,11 +13,11 @@ import (
 )
 
 func testInitAllen() *ethclient.Client {
-	ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
+	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
 	//ethCli, err := ethclient.Dial("https://mainnet.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
-	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/b7747070162f4fd698da299bf4e172a1")
+	ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/b7747070162f4fd698da299bf4e172a1")
 	if err != nil {
 		panic(err)
 	}
@@ -54,9 +54,10 @@ func TestMockFight(t *testing.T) {
 		panic(err)
 	}
 	startTime := time.Now()
-	fmt.Println("开始夹击，当前时间", startTime.Unix())
+	fmt.Println("开始夹击，当前时间", startTime.UnixNano())
 	Fight(tx)
-	fmt.Println("夹击完成，共耗时", time.Now().Unix()-startTime.Unix(), "秒")
+	endTime := time.Now()
+	fmt.Println("夹击完成，共耗时", endTime.UnixNano()-startTime.UnixNano(), "纳秒", endTime.UnixMilli()-startTime.UnixMilli(), "毫秒")
 }
 
 func TestSpeedNonce(t *testing.T) {
