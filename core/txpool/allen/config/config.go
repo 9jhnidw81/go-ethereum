@@ -36,6 +36,8 @@ const (
 	MethodSwapExactETHForTokensSupportingFeeOnTransferTokens    = "swapExactETHForTokensSupportingFeeOnTransferTokens"    // 有固定ETH换最多代币
 	MethodSwapExactTokensForETHSupportingFeeOnTransferTokens    = "swapExactTokensForETHSupportingFeeOnTransferTokens"    // ETH卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
 	MethodSwapExactTokensForTokensSupportingFeeOnTransferTokens = "swapExactTokensForTokensSupportingFeeOnTransferTokens" // 代币卖出，绕过严格的余额检查，允许你即使转账被扣费，也能完成兑换
+	MethodFrontRun                                              = "frontRun"                                              // 前导方法
+	MethodBackRun                                               = "backRun"                                               // 后导方法
 )
 
 type Config struct {
