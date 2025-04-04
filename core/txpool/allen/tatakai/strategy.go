@@ -55,7 +55,7 @@ var (
 	// gas价格滑点，100为递增1倍，125为1.25倍，最低倍数（gasPrice与gasTipCap一致）
 	slipPointGasPriceMin int32 = 100
 	// gas价格滑点，100为递增1倍，125为1.25倍，最高倍数（gasPrice与gasTipCap一致）
-	slipPointGasPriceMax int32 = 100 * 1
+	slipPointGasPriceMax int32 = 100 * 20
 	// 每次递增倍数，在原来的基础上递增多少倍
 	slipPointIncreasePer int32 = 200
 	// 后导价格gas price递增倍数，100为递增1倍
@@ -349,14 +349,14 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 				log.Printf("[Fight] buildBundleTx failed:%+v", err)
 				return err
 			}
-			for _, v := range bundle {
-				err := b.ethClient.SendTransaction(context.Background(), v)
-				fmt.Println("直接发送交易", err)
-				if err != nil {
-					return err
-				}
-			}
-			//b.sendToFlashbot(context.Background(), bundle, path[1])
+			//for _, v := range bundle {
+			//	err := b.ethClient.SendTransaction(context.Background(), v)
+			//	fmt.Println("直接发送交易", err)
+			//	if err != nil {
+			//		return err
+			//	}
+			//}
+			b.sendToFlashbot(context.Background(), bundle, path[1])
 			return nil
 		})
 	}
@@ -459,7 +459,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		return nil, err
 	}
 	if !isProfitable {
-		//return nil, common2.ErrNotEnoughProfit
+		return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
@@ -472,8 +472,8 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		"gasTipCap", in.GasTipCap,
 		"gasTipCapETH", WeiToEth(in.GasTipCap),
 	)
-	return []*types.Transaction{frontTx, backTx}, nil
-	//return []*types.Transaction{frontTx, in.VictimTx, backTx}, nil
+	//return []*types.Transaction{frontTx, backTx}, nil
+	return []*types.Transaction{frontTx, in.VictimTx, backTx}, nil
 }
 
 // 发送到Flashbot机器人
@@ -508,8 +508,8 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 
 	/***********************************构造交易数据***********************************/
 	data, err := b.parser.smartContractABI.Pack(config.MethodFrontRun,
-		in.Path[1],
 		minAmountOut, // 愿意接受的 最少能换到多少代币，少于会失败
+		in.Path[1],   // 测试网token在前，主网token在后
 	)
 
 	if err != nil {
@@ -563,7 +563,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 }
 
 // 构建卖入交易（后跑）
-func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxParams) (*types.Transaction, error) {
+func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxParams) (*types.Transaction, error) {
 	const (
 		methodPrefix = "buildBackRunTx"
 	)
@@ -601,8 +601,8 @@ func (b *SandwichBuilder) buildBackRunTx(ctx context.Context, in BuildBackRunTxP
 
 	/***********************************构造交易数据***********************************/
 	data, err := b.parser.smartContractABI.Pack(config.MethodBackRun,
-		in.Path[1],
 		amountOutMin, // 愿意接受的 最少能换到多少 ETH
+		in.Path[1],   // 测试网token在前，主网token在后
 	)
 	if err != nil {
 		return nil, fmt.Errorf("交易数据构造失败2: %w", err)
