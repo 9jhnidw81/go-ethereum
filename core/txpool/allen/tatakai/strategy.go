@@ -62,7 +62,7 @@ var (
 	// gas价格滑点，100为递增1倍，125为1.25倍，最低倍数（gasPrice与gasTipCap一致）
 	slipPointGasPriceMin int32 = 100
 	// gas价格滑点，100为递增1倍，125为1.25倍，最高倍数（gasPrice与gasTipCap一致）
-	slipPointGasPriceMax int32 = 100 * 20
+	slipPointGasPriceMax int32 = 100 * 1
 	// 每次递增倍数，在原来的基础上递增多少倍
 	slipPointIncreasePer int32 = 200
 	// 后导价格gas price递增倍数，100为递增1倍
@@ -362,11 +362,13 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 		needApprove  bool           // 是否需要授权
 		approveNonce uint64         // 授权交易的nonce
 	)
+	fmt.Println("fff", frontNonce, backNonce)
 	if needApprove = allowance.Cmp(big.NewInt(0)) == 0; needApprove {
 		approveNonce = frontNonce
-		frontNonce++
-		backNonce++
+		//frontNonce++
+		//backNonce++
 	}
+	fmt.Println("fff", frontNonce, backNonce)
 
 	// 普通bundle: 不同Gas交易
 	gasPriceRange, gasTipCapRange := b.generateGasRange(gasPrice, gasTipCap, gasBaseFee)
@@ -397,6 +399,13 @@ func (b *SandwichBuilder) Build(ctx context.Context, tx *types.Transaction) ([]*
 				log.Printf("[Fight] buildBundleTx failed:%+v", err)
 				return err
 			}
+			for _, v := range bundle {
+				err := b.ethClient.SendTransaction(context.Background(), v)
+				fmt.Println("直接发送交易", err)
+				if err != nil {
+					return err
+				}
+			}
 			b.sendToFlashbot(context.Background(), bundle, path[1])
 			return nil
 		})
@@ -420,25 +429,25 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		backEstimateGas    uint64             // 后导交易建议Gas
 	)
 
-	eg.Go(func() error {
-		// 需要授权
-		if in.NeedApprove {
-			maxAmountIn := new(big.Int)
-			maxAmountIn.SetString(maxApproveAmount, 16)
-			at, aeg, err := b.buildApproveTx(ctx, BuildApproveTxParams{
-				GasTipCap:    in.GasTipCap,
-				GasPrice:     in.GasPrice,
-				ApproveNonce: in.ApproveNonce,
-				TokenAddress: in.Path[1],
-				AmountIn:     maxAmountIn,
-			})
-			if err != nil {
-				return fmt.Errorf("构建授权交易失败(%v)", err)
-			}
-			approveTx, approveEstimateGas = at, aeg
-		}
-		return nil
-	})
+	//eg.Go(func() error {
+	//	// 需要授权
+	//	if in.NeedApprove {
+	//		maxAmountIn := new(big.Int)
+	//		maxAmountIn.SetString(maxApproveAmount, 16)
+	//		at, aeg, err := b.buildApproveTx(ctx, BuildApproveTxParams{
+	//			GasTipCap:    in.GasTipCap,
+	//			GasPrice:     in.GasPrice,
+	//			ApproveNonce: in.ApproveNonce,
+	//			TokenAddress: in.Path[1],
+	//			AmountIn:     maxAmountIn,
+	//		})
+	//		if err != nil {
+	//			return fmt.Errorf("构建授权交易失败(%v)", err)
+	//		}
+	//		approveTx, approveEstimateGas = at, aeg
+	//	}
+	//	return nil
+	//})
 
 	eg.Go(func() error {
 		// 前导交易
@@ -526,7 +535,7 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		return nil, err
 	}
 	if !isProfitable {
-		return nil, common2.ErrNotEnoughProfit
+		//return nil, common2.ErrNotEnoughProfit
 	}
 	/***********************************利润空间判断***********************************/
 
@@ -541,11 +550,11 @@ func (b *SandwichBuilder) buildBundleTx(ctx context.Context, in BuildBundleTxPar
 		"gasTipCapETH", WeiToEth(in.GasTipCap),
 	)
 	if in.NeedApprove && approveTx != nil {
-		//return []*types.Transaction{approveTx, frontTx, backTx}, nil
-		return []*types.Transaction{approveTx, frontTx, in.VictimTx, backTx}, nil
+		return []*types.Transaction{approveTx, frontTx, backTx}, nil
+		//return []*types.Transaction{approveTx, frontTx, in.VictimTx, backTx}, nil
 	}
-	//return []*types.Transaction{frontTx, backTx}, nil
-	return []*types.Transaction{frontTx, in.VictimTx, backTx}, nil
+	return []*types.Transaction{frontTx, backTx}, nil
+	//return []*types.Transaction{frontTx, in.VictimTx, backTx}, nil
 }
 
 // 发送到Flashbot机器人
@@ -589,11 +598,16 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	)
 	if inputIsETH {
 		// ETH兑换
-		data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
-			minAmountOut,  // 愿意接受的 最少能换到多少代币，少于会失败
-			in.Path,       // 兑换代币的路径 [weth, token]
-			b.FromAddress, // 接收代币的路径
-			deadline,      // 过期时间
+		//data, err = b.parser.uniswapABI.Pack(config.MethodSwapExactETHForTokensSupportingFeeOnTransferTokens,
+		//	minAmountOut,  // 愿意接受的 最少能换到多少代币，少于会失败
+		//	in.Path,       // 兑换代币的路径 [weth, token]
+		//	b.FromAddress, // 接收代币的路径
+		//	deadline,      // 过期时间
+		//)
+		// ETH兑换
+		data, err = b.parser.smartContractABI.Pack("frontRun",
+			in.Path[1],
+			minAmountOut, // 愿意接受的 最少能换到多少代币，少于会失败
 		)
 	} else {
 		// 代币兑换
@@ -614,8 +628,9 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	/***********************************估算Gas Limit***********************************/
 	gasLimit := b.DefaultGas
 	callMsg := ethereum.CallMsg{
-		From:      b.FromAddress,
-		To:        in.VictimTx.To(),
+		From: b.FromAddress,
+		//To:        in.VictimTx.To(),
+		To:        &b.parser.smartContractAddress,
 		Value:     big.NewInt(0), // 代币兑换代币，则为0
 		GasTipCap: in.GasTipCap,  // 矿工Gas费用
 		GasFeeCap: in.GasPrice,   // 总Gas费用上限
@@ -624,6 +639,7 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 	if inputIsETH {
 		callMsg.Value = in.FrontInAmount // ETH兑换，则为value
 	}
+	fmt.Println("inputIsETHinputIsETH", inputIsETH)
 	estimatedGas, err := b.ethClient.EstimateGas(ctx, callMsg)
 	if err != nil {
 		// 错误就直接返回了，避免错误导致卡nonce
@@ -641,20 +657,137 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 		GasTipCap: in.GasTipCap,                                          // 每个 Gas 的「矿工小费」（优先费，直接支付给矿工），也就是Gas的价格，实际消耗Gas数量取决于网络，由于数量不可控，但是价格可控，因为可通过调节价格决定矿工拿到的费用
 		GasFeeCap: in.GasPrice,                                           // 每个 Gas 的「最大总费用」（含基础费用 BaseFee + 矿工小费 TipCap），必须满足GasFeeCap ≥ BaseFee + GasTipCap
 		Gas:       CalculateUint64SlipPoint(gasLimit, slipPointGasLimit), // 最大Gas限制（实际消耗 Gas ≤ 此值，未用完的 Gas 会退还）
-		To:        in.VictimTx.To(),                                      // 目标合约地址（如 Uniswap Router）
-		Value:     big.NewInt(0),                                         // 代币兑换代币，则为0
-		Data:      data,                                                  // 交易调用数据（ABI 编码的合约方法）
+		To:        &b.parser.smartContractAddress,                        // 目标合约地址（如 Uniswap Router）
+		//To:        in.VictimTx.To(),                                      // 目标合约地址（如 Uniswap Router）
+		Value: big.NewInt(0), // 代币兑换代币，则为0
+		Data:  data,          // 交易调用数据（ABI 编码的合约方法）
 	}
 	if inputIsETH {
 		txInner.Value = in.FrontInAmount // ETH兑换，则为value
 	}
+	/*
+	   // SPDX-License-Identifier: MIT
+	   pragma solidity ^0.8.20;
 
+	   import "@openzeppelin/contracts/access/Ownable.sol";
+	   import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+	   import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+	   import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+	   interface IUniswapV2Router {
+	       function WETH() external pure returns (address);
+
+	       function swapExactETHForTokensSupportingFeeOnTransferTokens(
+	           uint256 amountOutMin,
+	           address[] calldata path,
+	           address to,
+	           uint256 deadline
+	       ) external payable;
+
+	       function swapExactTokensForETHSupportingFeeOnTransferTokens(
+	           uint256 amountIn,
+	           uint256 amountOutMin,
+	           address[] calldata path,
+	           address to,
+	           uint256 deadline
+	       ) external;
+	   }
+
+	   contract PureArbitrage is Ownable, ReentrancyGuard {
+	       using SafeERC20 for IERC20;
+
+	       address public immutable router;
+	       mapping(address => bool) private _approvedTokens;
+
+	       constructor(address _router) Ownable(msg.sender) {
+	           require(_router != address(0), "Invalid router");
+	           router = _router;
+	       }
+
+	       // 前导交易：ETH -> Token (路径: WETH -> Token)
+	       function frontRun(address token, uint256 amountOutMin)
+	           external
+	           payable
+	           onlyOwner
+	           nonReentrant
+	       {
+	           require(msg.value > 0, "ETH required");
+	           address[] memory path = new address[](2);
+	           path[0] = IUniswapV2Router(router).WETH();
+	           path[1] = token;
+
+	           IUniswapV2Router(router)
+	               .swapExactETHForTokensSupportingFeeOnTransferTokens{
+	               value: msg.value
+	           }(amountOutMin, path, address(this), block.timestamp);
+	       }
+
+	       // 后导交易：Token -> ETH (路径: Token -> WETH)
+	       function backRun(address token, uint256 amountOutMin)
+	           external
+	           onlyOwner
+	           nonReentrant
+	       {
+	           IERC20 tokenContract = IERC20(token);
+	           uint256 balance = tokenContract.balanceOf(address(this));
+	           require(balance > 0, "No balance");
+
+	           // 动态授权检查
+	           if (!_approvedTokens[token]) {
+	               tokenContract.forceApprove(router, 0);
+	               tokenContract.forceApprove(router, type(uint256).max);
+	               _approvedTokens[token] = true;
+	           }
+
+	           address[] memory path = new address[](2);
+	           path[0] = token;
+	           path[1] = IUniswapV2Router(router).WETH();
+
+	           IUniswapV2Router(router)
+	               .swapExactTokensForETHSupportingFeeOnTransferTokens(
+	                   balance,
+	                   amountOutMin,
+	                   path,
+	                   owner(),
+	                   block.timestamp
+	               );
+	       }
+
+	       // 紧急提现ETH
+	       function emergencyWithdrawETH() external onlyOwner nonReentrant {
+	           payable(owner()).transfer(address(this).balance);
+	       }
+
+	       // 紧急提现代币
+	       function emergencyWithdrawToken(address token)
+	           external
+	           onlyOwner
+	           nonReentrant
+	       {
+	           uint256 balance = IERC20(token).balanceOf(address(this));
+	           IERC20(token).safeTransfer(owner(), balance);
+	       }
+
+	       receive() external payable {}
+	   }
+	*/
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
 		return nil, 0, fmt.Errorf("[%s] 构建签名交易失败: %w", methodPrefix, err)
 	}
 	//fmt.Printf("[Fight] Front tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 	/***********************************构建并签名交易***********************************/
+	//err = b.fbClient.CallBundle(context.Background(), []*types.Transaction{signedTx})
+	//fmt.Println("发送交易111", err)
+	//if err != nil {
+	//	return nil, 1, err
+	//}
+	// 发送交易
+	//err = b.ethClient.SendTransaction(ctx, signedTx)
+	//fmt.Println("发送交易", err)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	return signedTx, estimatedGas, nil
 }
@@ -706,15 +839,24 @@ func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxPar
 	if outputIsETH {
 		methodName = config.MethodSwapExactTokensForETHSupportingFeeOnTransferTokens // 否则为卖出eth
 	}
-	data, err := b.parser.uniswapABI.Pack(methodName,
-		frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币
-		amountOutMin,  // 愿意接受的 最少能换到多少 ETH
-		reversePath,   // 交易路径[代币A, 代币B] [代币地址, WETH地址]
-		b.FromAddress, // ETH接收地址
-		deadline,      // 交易过期时间戳
+	fmt.Println(deadline, reversePath, methodName, in.BackNonce-1)
+	//data, err := b.parser.uniswapABI.Pack(methodName,
+	//	frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币
+	//	amountOutMin,  // 愿意接受的 最少能换到多少 ETH
+	//	reversePath,   // 交易路径[代币A, 代币B] [代币地址, WETH地址]
+	//	b.FromAddress, // ETH接收地址
+	//	deadline,      // 交易过期时间戳
+	//)
+	data, err := b.parser.smartContractABI.Pack("backRun",
+		//frontTokenOut, // 花出去的 代币 A 的精确数量，使用前导获得的全部代币
+		in.Path[1],
+		amountOutMin, // 愿意接受的 最少能换到多少 ETH
+		//reversePath,   // 交易路径[代币A, 代币B] [代币地址, WETH地址]
+		//b.FromAddress, // ETH接收地址
+		//deadline,      // 交易过期时间戳
 	)
 	if err != nil {
-		return nil, fmt.Errorf("交易数据构造失败: %w", err)
+		return nil, fmt.Errorf("交易数据构造失败2: %w", err)
 	}
 	/***********************************构造交易数据***********************************/
 
@@ -741,16 +883,28 @@ func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxPar
 		GasTipCap: in.GasTipCap,
 		GasFeeCap: in.GasPrice,
 		Gas:       CalculateUint64SlipPoint(gasLimit, slipPointGasLimit),
-		To:        in.VictimTx.To(),
-		Data:      data,
+		//To:        in.VictimTx.To(),
+		To:   &b.parser.smartContractAddress,
+		Data: data,
 	}
 	signedTx, err := b.buildAndSignTx(txInner)
 	if err != nil {
 		return nil, err
 	}
+	//卖出有问题，明天改一下
 	//fmt.Printf("[Fight] Back tx nonce:%+v gasPrice:%+v gas:%+v to:%+v value:%+v\n", txInner.Nonce, txInner.GasPrice, txInner.Gas, txInner.To, txInner.Value)
 	/***********************************构建并签名交易***********************************/
-
+	// 发送交易
+	//err = b.ethClient.SendTransaction(context.Background(), signedTx)
+	//fmt.Println("发送交易", err)
+	if err != nil {
+		return nil, err
+	}
+	//err = b.fbClient.CallBundle(context.Background(), []*types.Transaction{signedTx})
+	//fmt.Println("发送交易", err)
+	if err != nil {
+		return nil, err
+	}
 	return signedTx, nil
 }
 

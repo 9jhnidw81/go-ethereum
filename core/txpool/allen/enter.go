@@ -16,7 +16,7 @@ import (
 var (
 	SwBuilder *tatakai.SandwichBuilder
 	FbClient  *client.FlashbotClient
-	isTest    = false // 是否测试模式
+	isTest    = true // 是否测试模式
 )
 
 // Attack 进击吧，艾伦

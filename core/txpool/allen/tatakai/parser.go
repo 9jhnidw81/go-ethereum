@@ -23,15 +23,17 @@ var uniswapMethods = map[string]string{
 
 // TransactionParser 交易解析器
 type TransactionParser struct {
-	routerAddress   common.Address
-	wethAddress     common.Address
-	inTokenAddress  common.Address
-	factoryAddress  common.Address
-	factoryAddress2 common.Address
-	uniswapABI      abi.ABI
-	erc20ABI        abi.ABI
-	pairABI         abi.ABI
-	factoryABI      abi.ABI
+	routerAddress        common.Address
+	wethAddress          common.Address
+	inTokenAddress       common.Address
+	factoryAddress       common.Address
+	factoryAddress2      common.Address
+	smartContractAddress common.Address
+	uniswapABI           abi.ABI
+	erc20ABI             abi.ABI
+	pairABI              abi.ABI
+	factoryABI           abi.ABI
+	smartContractABI     abi.ABI
 }
 
 func NewParser(cfg *config.Config) (*TransactionParser, error) {
@@ -51,17 +53,23 @@ func NewParser(cfg *config.Config) (*TransactionParser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析FactoryABI失败: %v", err)
 	}
+	smartContractABI, err := abi.JSON(strings.NewReader(cfg.SmartContractAbi))
+	if err != nil {
+		return nil, fmt.Errorf("解析SmartContractABI失败: %v", err)
+	}
 
 	return &TransactionParser{
-		routerAddress:   common.HexToAddress(cfg.RouterAddress),
-		wethAddress:     common.HexToAddress(cfg.WETHAddress),
-		inTokenAddress:  common.HexToAddress(cfg.InTokenAddress),
-		factoryAddress:  common.HexToAddress(cfg.FactoryAddress),
-		factoryAddress2: common.HexToAddress(cfg.FactoryAddress2),
-		uniswapABI:      uniswapABI,
-		erc20ABI:        erc20ABI,
-		pairABI:         pairABI,
-		factoryABI:      factoryABI,
+		routerAddress:        common.HexToAddress(cfg.RouterAddress),
+		wethAddress:          common.HexToAddress(cfg.WETHAddress),
+		inTokenAddress:       common.HexToAddress(cfg.InTokenAddress),
+		factoryAddress:       common.HexToAddress(cfg.FactoryAddress),
+		factoryAddress2:      common.HexToAddress(cfg.FactoryAddress2),
+		smartContractAddress: common.HexToAddress(cfg.SmartContractAddress),
+		uniswapABI:           uniswapABI,
+		erc20ABI:             erc20ABI,
+		pairABI:              pairABI,
+		factoryABI:           factoryABI,
+		smartContractABI:     smartContractABI,
 	}, nil
 }
 
