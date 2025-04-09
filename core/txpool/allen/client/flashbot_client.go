@@ -29,7 +29,7 @@ const (
 )
 
 type FlashbotClient struct {
-	rpc        *flashbotsrpc.FlashbotsRPC
+	FbRpc      *flashbotsrpc.FlashbotsRPC
 	EthClient  *EthClient
 	config     *config.Config
 	privateKey *ecdsa.PrivateKey
@@ -99,14 +99,14 @@ type Privacy struct {
 
 func NewFlashbotClient(cfg *config.Config, ethClient *EthClient, pk *ecdsa.PrivateKey) *FlashbotClient {
 	return &FlashbotClient{
-		rpc:        flashbotsrpc.New(cfg.FlashbotsEndpoint[0]), // 这里主要是mock交易，只需要一条节点即可
+		FbRpc:      flashbotsrpc.New(cfg.FlashbotsEndpoint[0]), // 这里主要是mock交易，只需要一条节点即可
 		EthClient:  ethClient,
 		config:     cfg,
 		privateKey: pk,
 	}
 }
 
-func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transaction) error {
+func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transaction, retryCount int) error {
 	const (
 		methodPrefix = "MevSendBundle"
 	)
@@ -132,28 +132,31 @@ func (c *FlashbotClient) MevSendBundle(ctx context.Context, txs []*types.Transac
 
 	endPoints := c.config.FlashbotsEndpoint
 	for i := 0; i < len(endPoints); i++ {
-		eg.Go(func() error {
-			req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
-			headerReady, _ := crypto.Sign(
-				accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
-				c.privateKey,
-			)
-			req.Header.Add("content-type", j)
-			req.Header.Add("Accept", j)
-			req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
-			resp, err := mevHTTPClient.Do(req)
-			if err != nil {
-				return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
-			}
-			res, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
-			}
-			fmt.Println("Mev_sendBundle")
-			fmt.Println(string(res))
-			return nil
-		})
+		for k := 0; k < retryCount; k++ {
+			eg.Go(func() error {
+				req, _ := http.NewRequest("POST", endPoints[i], bytes.NewBuffer(payload))
+				headerReady, _ := crypto.Sign(
+					accounts.TextHash([]byte(hexutil.Encode(crypto.Keccak256(payload)))),
+					c.privateKey,
+				)
+				req.Header.Add("content-type", j)
+				req.Header.Add("Accept", j)
+				req.Header.Add(flashbotXHeader, flashbotHeader(headerReady, c.privateKey))
+				resp, err := mevHTTPClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("[%s] do request failed:%w", methodPrefix, err)
+				}
+				res, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("[%s] read all body(%+v) failed:%w", methodPrefix, resp.Body, err)
+				}
+				fmt.Println("Mev_sendBundle")
+				fmt.Println(string(res))
+				return nil
+			})
+		}
 	}
+	_ = eg.Wait()
 
 	return nil
 }
@@ -238,7 +241,7 @@ func (c *FlashbotClient) SendBundle(ctx context.Context, txs []*types.Transactio
 	//    "https://bloxroute.ethical",
 	//    "https://rsync-builder.xyz"
 	fmt.Println("bln", blockNumber)
-	_, err = c.rpc.FlashbotsSendBundle(c.privateKey, flashbotsrpc.FlashbotsSendBundleRequest{
+	_, err = c.FbRpc.FlashbotsSendBundle(c.privateKey, flashbotsrpc.FlashbotsSendBundleRequest{
 		Txs:         rawTxs,
 		BlockNumber: fmt.Sprintf("0x%x", blockNumber+1),
 	})
@@ -266,7 +269,7 @@ func (c *FlashbotClient) CallBundle(ctx context.Context, txs []*types.Transactio
 		return err
 	}
 
-	_, err = c.rpc.FlashbotsCallBundle(c.privateKey, flashbotsrpc.FlashbotsCallBundleParam{
+	_, err = c.FbRpc.FlashbotsCallBundle(c.privateKey, flashbotsrpc.FlashbotsCallBundleParam{
 		Txs:              rawTxs,
 		BlockNumber:      fmt.Sprintf("0x%x", blockNumber+1),
 		StateBlockNumber: "latest",

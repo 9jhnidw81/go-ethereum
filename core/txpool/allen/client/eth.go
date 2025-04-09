@@ -232,7 +232,7 @@ func (c *EthClient) SpeedNonce(
 
 	// 验证nonce有效性
 	if targetNonce < currentNonce {
-		return nil, fmt.Errorf("[%s] nonce %d 已确认不可覆盖", methodPrefix, targetNonce)
+		return nil, fmt.Errorf("[%s] nonce %d < currentNonce %v 已确认不可覆盖", methodPrefix, targetNonce, currentNonce)
 	}
 
 	// 计算加速gas价格

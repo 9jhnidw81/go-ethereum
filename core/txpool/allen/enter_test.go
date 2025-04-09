@@ -2,12 +2,15 @@ package allen
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/client"
 	"github.com/ethereum/go-ethereum/core/txpool/allen/config"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/metachris/flashbotsrpc"
 	"testing"
 	"time"
 )
@@ -15,9 +18,9 @@ import (
 func testInitAllen() *ethclient.Client {
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/7d5a6189348c438ab586891e09415578")
-	ethCli, err := ethclient.Dial("https://mainnet.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
+	//ethCli, err := ethclient.Dial("https://mainnet.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
 	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/0f498747340a49e498cfdaaa1fcb2f2a")
-	//ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/b7747070162f4fd698da299bf4e172a1")
+	ethCli, err := ethclient.Dial("https://sepolia.infura.io/v3/b7747070162f4fd698da299bf4e172a1")
 	if err != nil {
 		panic(err)
 	}
@@ -29,7 +32,7 @@ func TestMockFight(t *testing.T) {
 	ethCli := testInitAllen()
 	ctx := context.Background()
 	// eth-link
-	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x6e2865505a20de3caea9845d92ab48024794b1197f3a936e814ced374d7b2dd1"))
+	tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x6e2865505a20de3caea9845d92ab48024794b1197f3a936e814ced374d7b2dd1"))
 	// eth-
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x9ea426a6df1f02adba83a43faf6f24b7761e2d478fead41b8c37dcdf64455434"))
 	// eth-SECHT sepolia
@@ -47,7 +50,7 @@ func TestMockFight(t *testing.T) {
 	// yu-btc
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x838e57cbe839b44be98131b5e7df3d86cd93ff19900b5bb6f0a8d81278cd2cbd"))
 	// eth-BWINX, 主网
-	tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x4adbc33afea3c7f041c64d0f3f8807f5efb596d8e125bdec17429e31b93aa15d"))
+	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0x4adbc33afea3c7f041c64d0f3f8807f5efb596d8e125bdec17429e31b93aa15d"))
 	// eth-Dogestory, 主网
 	//tx, _, err := ethCli.TransactionByHash(ctx, common.HexToHash("0xee3f71d256af6002385829400a487efecacc802c999d41a13563bedcbca1fd6b"))
 	if err != nil {
@@ -61,7 +64,7 @@ func TestMockFight(t *testing.T) {
 }
 
 func TestSpeedNonce(t *testing.T) {
-	//ethCli := testInitAllen()
+	ethCli := testInitAllen()
 	ctx := context.Background()
 	cfg := config.Get(config.Sepolia)
 	ethCli, err := ethclient.Dial("wss://sepolia.infura.io/ws/v3/7d5a6189348c438ab586891e09415578")
@@ -69,12 +72,29 @@ func TestSpeedNonce(t *testing.T) {
 		panic(err)
 	}
 	myEthClient, err := client.NewEthClient(cfg, ethCli)
-	pk := loadPrivateKey("")
-	for i := 19; i <= 19; i++ {
+	pk := loadPrivateKey("7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee")
+	fmt.Println("pub Key", crypto.PubkeyToAddress(pk.PublicKey))
+	for i := 136; i <= 136; i++ {
 		speedNonce, err := myEthClient.SpeedNonce(ctx, pk, crypto.PubkeyToAddress(pk.PublicKey), uint64(i), 200)
+		t.Logf("SpeedNonce:%+v, err:%+v", speedNonce, err)
 		if err != nil {
 			return
 		}
-		t.Logf("SpeedNonce:%+v", speedNonce)
+		data, err := speedNonce.MarshalBinary()
+		if err != nil {
+			return
+		}
+		transaction, err := FbClient.FbRpc.FlashbotsSendPrivateTransaction(pk, flashbotsrpc.FlashbotsSendPrivateTransactionRequest{
+			Tx: "0x" + hex.EncodeToString(data),
+		})
+		t.Logf("transaction:%+v, err:%+v", transaction, err)
+		if err != nil {
+			return
+		}
+		err = FbClient.SendBundle(context.Background(), []*types.Transaction{speedNonce})
+		t.Logf("SpeedNonce:%+v, err:%+v", speedNonce, err)
+		if err != nil {
+			return
+		}
 	}
 }
