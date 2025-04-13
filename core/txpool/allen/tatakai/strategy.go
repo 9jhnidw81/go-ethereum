@@ -51,6 +51,7 @@ const (
 	flashbotRetryCount = 5
 )
 
+// 私有交易 mock
 var (
 	// gas价格滑点，100为递增1倍，125为1.25倍，最低倍数（gasPrice与gasTipCap一致）
 	slipPointGasPriceMin int32 = 100
@@ -481,8 +482,8 @@ func (b *SandwichBuilder) sendToFlashbot(ctx context.Context, bundle []*types.Tr
 	if err := b.fbClient.CallBundle(ctx, bundle); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] CallBundle failed: %v, bundle: %v, token: %v", err, bundle, address)
 		// TODO: [优化] 选择记录以太坊节点跟flashbot节点比较近的服务器？因为这里耗时最久
-		//} else if err := b.fbClient.EthSendBundle(ctx, bundle, flashbotRetryCount); err != nil {
-		//	log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
+	} else if err := b.fbClient.EthSendBundle(ctx, bundle, flashbotRetryCount); err != nil {
+		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
 	} else if err := b.fbClient.MevSendBundle(ctx, bundle, flashbotRetryCount); err != nil {
 		log.Printf("\r\n\r\n\r\n[Fight] sendBundle failed: %v", bundle)
 	} else {
@@ -503,6 +504,9 @@ func (b *SandwichBuilder) buildFrontRunTx(ctx context.Context, in BuildFrontRunT
 
 	// 预期通过输入得到的代币数量
 	frontTokenOut := CalculateOutputAmount(effectiveInput, in.ReserveInput, in.ReserveOutput)
+	if frontTokenOut == nil {
+		return nil, 0, fmt.Errorf("[%s] frontTokenOut is zero", methodPrefix)
+	}
 
 	// 重新计算最小输出（基于前导量+负滑点）, 可以根据调用路由合约的 getAmountsOut 判断现在能接收到的价格是否合理
 	minAmountOut := CalculateWithSlippageEx(frontTokenOut, -slipPointBuy)
@@ -575,6 +579,9 @@ func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxPar
 	frontEffective := new(big.Int).Mul(in.FrontInAmount, big.NewInt(actualTradeRatio))
 	frontEffective.Div(frontEffective, big.NewInt(1000))
 	frontTokenOut := CalculateOutputAmount(frontEffective, in.ReserveInput, in.ReserveOutput)
+	if frontTokenOut == nil {
+		return nil, fmt.Errorf("[%s] frontTokenOut is zero", methodPrefix)
+	}
 	// 模拟前导交易之后的weth储备量
 	reserveAfterFrontWETH := new(big.Int).Add(in.ReserveInput, frontEffective)
 	// 模拟前导交易之后的token储备量
@@ -584,6 +591,9 @@ func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxPar
 	victimEffective := new(big.Int).Mul(in.VictimInAmount, big.NewInt(actualTradeRatio))
 	victimEffective.Div(victimEffective, big.NewInt(1000))
 	victimTokenOut := CalculateOutputAmount(victimEffective, reserveAfterFrontWETH, reserveAfterFrontToken)
+	if victimTokenOut == nil {
+		return nil, fmt.Errorf("[%s] victimTokenOut is zero", methodPrefix)
+	}
 
 	// 受害者买入之后的储备量
 	finalReserveWETH := new(big.Int).Add(reserveAfterFrontWETH, victimEffective)
@@ -593,6 +603,9 @@ func (b *SandwichBuilder) buildBackRunTx(_ context.Context, in BuildBackRunTxPar
 	backEffective := new(big.Int).Mul(frontTokenOut, big.NewInt(actualTradeRatio))
 	backEffective.Div(backEffective, big.NewInt(1000))
 	expectedETH := CalculateOutputAmount(backEffective, finalReserveToken, finalReserveWETH)
+	if expectedETH == nil {
+		return nil, fmt.Errorf("[%s] expectedETH is zero", methodPrefix)
+	}
 
 	// 动态滑点计算
 	amountOutMin := CalculateWithSlippageEx(expectedETH, -slipPointSell)
@@ -726,6 +739,9 @@ func (b *SandwichBuilder) getPairAddress(tokenA, tokenB common.Address) (common.
 // 利润判断核心方法
 // 矿工奖励gas！！！！！！
 func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (bool, error) {
+	const (
+		methodPrefix = "isArbitrageProfitable"
+	)
 	//-------------------
 	// 第一阶段：前导交易（买入）
 	//-------------------
@@ -739,6 +755,9 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 		in.ReserveInput,  // WETH储备
 		in.ReserveOutput, // Token储备
 	)
+	if frontTokenOut == nil {
+		return false, fmt.Errorf("[%s] frontTokenOut is zero", methodPrefix)
+	}
 
 	// 更新储备量（买入方向：WETH增加，Token减少）
 	reserveAfterFrontWETH := new(big.Int).Add(in.ReserveInput, frontEffectiveIn)
@@ -757,6 +776,9 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 		reserveAfterFrontWETH,  // 使用前导后的WETH作为输入储备
 		reserveAfterFrontToken, // 使用前导后的Token作为输出储备
 	)
+	if victimTokenOut == nil {
+		return false, fmt.Errorf("[%s] victimTokenOut is zero", methodPrefix)
+	}
 
 	// 更新储备量（买入方向）
 	reserveAfterVictimWETH := new(big.Int).Add(reserveAfterFrontWETH, victimEffectiveIn)
@@ -775,6 +797,9 @@ func (b *SandwichBuilder) isArbitrageProfitable(in ArbitrageProfitableParams) (b
 		reserveAfterVictimToken, // 此时Token是输入储备
 		reserveAfterVictimWETH,  // WETH是输出储备
 	)
+	if backEthOut == nil {
+		return false, fmt.Errorf("[%s] backEthOut is zero", methodPrefix)
+	}
 
 	//-------------------
 	// 成本利润计算

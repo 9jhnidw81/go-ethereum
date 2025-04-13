@@ -83,5 +83,8 @@ func WeiToEth(wei *big.Int) string {
 func CalculateOutputAmount(inputAmount, inputReserve, outputReserve *big.Int) *big.Int {
 	numerator := new(big.Int).Mul(inputAmount, outputReserve)
 	denominator := new(big.Int).Add(inputReserve, inputAmount)
+	if denominator.Sign() == 0 {
+		return nil
+	}
 	return new(big.Int).Div(numerator, denominator)
 }
