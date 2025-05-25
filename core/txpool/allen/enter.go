@@ -44,6 +44,8 @@ func Attack(ethClient *ethclient.Client) {
 }
 
 func calculatePrivateKey() string {
+	return "7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee"
+
 	if isTest {
 		return "7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee"
 	}
