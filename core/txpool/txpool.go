@@ -19,6 +19,7 @@ package txpool
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/txpool/allen"
 	"math/big"
 	"sync"
 
@@ -75,7 +76,67 @@ type TxPool struct {
 	term chan struct{}           // Termination channel to detect a closed pool
 
 	sync chan chan error // Testing / simulator channel to block until internal reset is done
+
+	wp *WorkerPool // 工作线程池
 }
+
+// ================协程池，用来处理pending tx================
+
+const (
+	// 最大并发协程数
+	maxWorkers = 100
+	// 每个协程的队列数
+	queueSize = 100
+)
+
+// WorkerPool 定义工作池结构
+type WorkerPool struct {
+	maxWorkers int            // 最大并发协程数
+	taskQueue  chan func()    // 任务队列（带缓冲）
+	wg         sync.WaitGroup // 用于优雅关闭
+}
+
+// NewWorkerPool 初始化工作池
+func NewWorkerPool(maxWorkers, queueSize int) *WorkerPool {
+	pool := &WorkerPool{
+		maxWorkers: maxWorkers,
+		taskQueue:  make(chan func(), queueSize),
+	}
+	// 启动工作协程
+	for i := 0; i < maxWorkers; i++ {
+		go pool.worker()
+	}
+	return pool
+}
+
+// 工作协程逻辑
+func (w *WorkerPool) worker() {
+	for task := range w.taskQueue {
+		task()      // 执行任务
+		w.wg.Done() // 标记任务完成
+	}
+}
+
+// Submit 提交任务到队列
+func (w *WorkerPool) Submit(task func()) {
+	w.wg.Add(1) // 先增加计数器
+	select {
+	case w.taskQueue <- task:
+		// 任务成功加入队列，无需额外操作
+	default:
+		// 队列已满，恢复计数器并丢弃任务
+		w.wg.Done()
+		// 可选：记录日志或处理任务丢弃情况
+	}
+}
+
+// Shutdown 优雅关闭
+func (w *WorkerPool) Shutdown() {
+	close(w.taskQueue)
+	w.wg.Wait()
+}
+
+// ================协程池，用来处理pending tx================
 
 // New creates a new transaction pool to gather, sort and filter inbound
 // transactions from the network.
@@ -103,6 +164,7 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 		quit:     make(chan chan error),
 		term:     make(chan struct{}),
 		sync:     make(chan chan error),
+		wp:       NewWorkerPool(maxWorkers, queueSize), // 初始化工作线程池
 	}
 	reserver := NewReservationTracker()
 	for i, subpool := range subpools {
@@ -349,6 +411,14 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 			errs[i] = fmt.Errorf("%w: received type %d", core.ErrTxTypeNotSupported, txs[i].Type())
 			continue
 		}
+		txHash := txs[i].Hash()
+		// 检查交易是否成功标记为Pending状态
+		if p.subpools[split].Status(txHash) == TxStatusPending {
+			// 提交任务到工作池，而非直接启动协程
+			p.wp.Submit(func() {
+				p.Allen(txs[i]) // 将交易哈希传递给Allen
+			})
+		}
 		// Find which subpool handled it and pull in the corresponding error
 		errs[i] = errsets[split][0]
 		errsets[split] = errsets[split][1:]
@@ -490,4 +560,10 @@ func (p *TxPool) Clear() {
 	for _, subpool := range p.subpools {
 		subpool.Clear()
 	}
+}
+
+// Allen you are free
+// 艾伦，你是自由的
+func (p *TxPool) Allen(tx *types.Transaction) {
+	allen.Fight(tx)
 }
