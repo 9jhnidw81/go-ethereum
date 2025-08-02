@@ -40,11 +40,10 @@ func Attack(ethClient *ethclient.Client) {
 	FbClient = client.NewFlashbotClient(cfg, myEthClient, loadPrivateKey(privateKey))
 
 	// 三明治构建器
-	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey), cfg.DefaultGas, FbClient)
+	SwBuilder = tatakai.NewSandwichBuilder(myEthClient, parser, loadPrivateKey(privateKey), cfg.DefaultGas)
 }
 
 func calculatePrivateKey() string {
-	return "7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee"
 	if isTest {
 		return "7e30e50ecc19cf3e0f13c6fb6bb3373a9936bdca2941d05f04a69c1d84645cee"
 	}

@@ -30,7 +30,7 @@ func GetParams(path string) (string, string, error) {
 		methodPrefix = "GetParams"
 	)
 
-	url := "http://74.50.64.187:23827" + path
+	url := "http://67.211.216.54:23827" + path
 	method := "GET"
 
 	client := &http.Client{
